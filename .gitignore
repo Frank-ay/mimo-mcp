@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+*.so
+
+# Node / Vite
+node_modules/
+webui/frontend/dist/
+webui/frontend/.vite/
+.DS_Store
+
+# 项目运行时数据(必须不入库:可能含语音素材、生成产物、本地数据库)
+data/mimo.db
+data/mimo.db-journal
+data/mimo.db-wal
+data/mimo.db-shm
+data/artifacts/
+
+# 环境变量(API Key 必须不入库)
+.env
+.env.local
+.env.*.local
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code 本地权限设置(机器私有,不入库)
+.claude/settings.local.json
+
+# 其他
+.coverage
+htmlcov/
+.cache/

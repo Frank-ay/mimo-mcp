@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mimo-web",
+      "runtimeExecutable": "./node_modules/.bin/vite",
+      "runtimeArgs": [],
+      "cwd": "webui/frontend",
+      "port": 5173
+    }
+  ]
+}
