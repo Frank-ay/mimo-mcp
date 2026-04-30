@@ -67,14 +67,62 @@ export interface AuditEntry {
   error: string | null;
 }
 
+// ---- TTS 类型 ----
+export type AudioFormat = "wav" | "mp3";
+
+export interface TTSBody {
+  text: string;
+  voice?: string;
+  voice_id?: string;
+  audio_format?: AudioFormat;
+  speed?: number;
+  style?: string;
+}
+
+export interface TTSResult {
+  audio_path: string;
+  audio_url: string;
+  voice: string;
+  source: "default" | "clone" | "design";
+  model: string;
+  bytes: number;
+  audio_format: AudioFormat;
+  transcript_id: string;
+}
+
+export interface BatchSegmentEvent {
+  index: number;
+  total: number;
+  text: string;
+  audio_url: string;
+  voice: string;
+  source: "default" | "clone" | "design";
+  model: string;
+  bytes: number;
+}
+
+export interface BatchPlanEvent {
+  total: number;
+  segments: string[];
+}
+
+export interface BatchHandlers {
+  onPlan?: (e: BatchPlanEvent) => void;
+  onSegment?: (e: BatchSegmentEvent) => void;
+  onError?: (msg: string) => void;
+  onDone?: () => void;
+}
+
 // ---- 端点 ----
 export const api = {
   health: () => request<HealthResult>("/usage/health"),
-  usage: (sinceHours = 24) => request<UsageSummary>(`/usage/summary?since_hours=${sinceHours}`),
+  usage: (sinceHours = 24) =>
+    request<UsageSummary>(`/usage/summary?since_hours=${sinceHours}`),
   audit: (limit = 100) => request<AuditEntry[]>(`/usage/audit?limit=${limit}`),
   voices: (source?: VoiceSource) =>
     request<VoiceRecord[]>(`/voices${source ? `?source=${source}` : ""}`),
-  deleteVoice: (id: string) => request<{ deleted: boolean }>(`/voices/${id}`, { method: "DELETE" }),
+  deleteVoice: (id: string) =>
+    request<{ deleted: boolean }>(`/voices/${id}`, { method: "DELETE" }),
   createClone: (form: FormData) =>
     request<VoiceRecord>("/voices/clone", { method: "POST", body: form }),
   createDesign: (form: FormData) =>
@@ -89,5 +137,67 @@ export const api = {
     request<unknown>("/vision/image", { method: "POST", body: form }),
   videoUnderstand: (form: FormData) =>
     request<unknown>("/vision/video", { method: "POST", body: form }),
-  asr: (form: FormData) => request<unknown>("/asr", { method: "POST", body: form }),
+  asr: (form: FormData) =>
+    request<unknown>("/asr", { method: "POST", body: form }),
+
+  // TTS 单段一次性
+  ttsSynthesize: (body: TTSBody) =>
+    request<TTSResult>("/tts/synthesize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  // TTS 批量,SSE 流
+  ttsBatch: async (
+    body: TTSBody & { segment_max_chars?: number },
+    handlers: BatchHandlers,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const resp = await fetch(`${BASE}/tts/batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!resp.ok || !resp.body) {
+      const text = await resp.text().catch(() => resp.statusText);
+      handlers.onError?.(text);
+      return;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE 事件由 \n\n 分隔
+      let sep = buffer.indexOf("\n\n");
+      while (sep !== -1) {
+        const raw = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        sep = buffer.indexOf("\n\n");
+        const lines = raw.split("\n");
+        let event = "message";
+        let data = "";
+        for (const line of lines) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        try {
+          const obj = JSON.parse(data);
+          if (event === "plan") handlers.onPlan?.(obj as BatchPlanEvent);
+          else if (event === "segment")
+            handlers.onSegment?.(obj as BatchSegmentEvent);
+          else if (event === "error")
+            handlers.onError?.(obj.message ?? "未知错误");
+          else if (event === "done") handlers.onDone?.();
+        } catch {
+          // 忽略解析错误,继续读
+        }
+      }
+    }
+  },
 };

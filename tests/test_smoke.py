@@ -89,6 +89,31 @@ async def test_health_check_without_real_api() -> None:
     assert isinstance(result.notes, list)
 
 
+def test_split_text_segmentation() -> None:
+    """切段算法不需要联网,纯逻辑覆盖。"""
+    from mimo_mcp.api.tts import split_text
+
+    # 5 个句子,每段 max_chars=10 → 至少切 3 段(贪心合并)
+    text = "句子一。句子二!句子三?换行\n句子五。"
+    segs = split_text(text, max_chars=10)
+    assert len(segs) >= 3, f"期望 ≥3 段,实际 {len(segs)}: {segs}"
+    assert all(seg.strip() for seg in segs)
+    assert all(len(seg) <= 10 for seg in segs)
+
+    # max_chars 充足时整段保留
+    assert split_text("一句话。", max_chars=120) == ["一句话。"]
+    # 空白
+    assert split_text("   \n  ", max_chars=120) == []
+    # 超长无标点 → 按字符硬切
+    long_text = "a" * 250
+    segs2 = split_text(long_text, max_chars=100)
+    assert all(len(s) <= 100 for s in segs2)
+    assert sum(len(s) for s in segs2) == 250
+    # max_chars 过小 → 抛错
+    with pytest.raises(ValueError):
+        split_text("hi", max_chars=5)
+
+
 def test_mcp_server_registers_all_tools() -> None:
     """PRD §7 的 11 个 tool 必须全部注册到 FastMCP。"""
     import asyncio

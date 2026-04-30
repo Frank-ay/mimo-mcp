@@ -4,14 +4,20 @@
 - VoiceSource.DEFAULT → mimo-v2.5-tts,audio.voice = 预置名
 - VoiceSource.CLONE   → mimo-v2.5-tts-voiceclone,audio.voice = reference DataURL
 - VoiceSource.DESIGN  → mimo-v2.5-tts-voicedesign,user 消息 = 已存 prompt
+
+批量(2026-04-30 新增):
+- synthesize_batch:按句号 / 问号 / 感叹号 / 换行切段,每段独立合成
 """
 
 from __future__ import annotations
 
 import base64
 import uuid
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from ..client import MimoClient
 from ..config import get_settings
@@ -44,11 +50,25 @@ def _data_url(path: Path, mime: str = "audio/wav") -> str:
     return f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def _extra_audio(req: TTSRequest) -> dict[str, Any]:
+    """把 speed / style 等高级字段拼成 audio dict 透传给 MiMo。
+
+    Phase 0 实测显示当前不生效,但保留透传以备 MiMo 修复后立即可用。
+    """
+    extras: dict[str, Any] = {}
+    if req.speed is not None:
+        extras["speed"] = req.speed
+    if req.style:
+        extras["style"] = req.style
+    return extras
+
+
 async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[str, str | int]:
     """合成音频 → 写盘 → 返回 {audio_path, voice, source, model, bytes, transcript_id}。"""
     settings = get_settings()
     voice_token = req.voice or req.voice_id or "mimo_default"
     audio_format = req.audio_format or "wav"
+    extras = _extra_audio(req)
 
     record: VoiceRecord | None = None
     if storage is not None:
@@ -88,6 +108,7 @@ async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[st
                 voice=voice_token,
                 model=settings.default_tts_model,
                 audio_format=audio_format,
+                extra_audio=extras or None,
             )
             used_model = settings.default_tts_model
             used_source = "default"
@@ -104,7 +125,115 @@ async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[st
         "model": used_model,
         "bytes": len(audio_bytes),
         "transcript_id": audio.get("id") or "",
+        "audio_format": audio_format,
     }
+
+
+# ---------------------------------------------------------------------------
+# 批量切段合成(增量任务 1)
+# ---------------------------------------------------------------------------
+
+# 中英文句末标点 + 换行(切完保留分隔符在前一段尾部)
+_BREAKERS = "。!?;.!?;\n"
+
+
+@dataclass(frozen=True)
+class BatchSegment:
+    """一段批量合成结果。"""
+
+    index: int
+    total: int
+    text: str
+    audio_path: str
+    voice: str
+    source: str
+    model: str
+    bytes: int
+
+
+def split_text(text: str, max_chars: int = 120) -> list[str]:
+    """按句末标点切段,二次合并保证每段 ≤ max_chars。"""
+    if not text.strip():
+        return []
+    if max_chars < 10:
+        raise ValueError("max_chars 至少 10")
+
+    # 第一步:按句末标点 / 换行切成"原子段"(切完包含分隔符)
+    atoms: list[str] = []
+    buf: list[str] = []
+    for ch in text:
+        buf.append(ch)
+        if ch in _BREAKERS:
+            atom = "".join(buf)
+            if atom.strip():
+                atoms.append(atom)
+            buf = []
+    tail = "".join(buf)
+    if tail.strip():
+        atoms.append(tail)
+
+    # 第二步:贪心合并,保证每段 ≤ max_chars
+    merged: list[str] = []
+    cur = ""
+    for atom in atoms:
+        if not cur:
+            cur = atom
+        elif len(cur) + len(atom) <= max_chars:
+            cur += atom
+        else:
+            merged.append(cur.strip())
+            cur = atom
+    if cur.strip():
+        merged.append(cur.strip())
+
+    # 第三步:单段仍超长时按字符硬切
+    final: list[str] = []
+    for seg in merged:
+        if len(seg) <= max_chars:
+            final.append(seg)
+            continue
+        for i in range(0, len(seg), max_chars):
+            chunk = seg[i : i + max_chars]
+            if chunk.strip():
+                final.append(chunk)
+    return final
+
+
+async def synthesize_batch(
+    text: str,
+    *,
+    voice: str | None = None,
+    voice_id: str | None = None,
+    audio_format: str = "wav",
+    segment_max_chars: int = 120,
+    storage: Storage | None = None,
+) -> AsyncIterator[BatchSegment]:
+    """长文按段切分,顺序合成,逐段 yield。"""
+    segments = split_text(text, segment_max_chars)
+    total = len(segments)
+    if total == 0:
+        return
+
+    for idx, seg_text in enumerate(segments):
+        result = await synthesize(
+            TTSRequest(
+                text=seg_text,
+                voice=voice,
+                voice_id=voice_id,
+                audio_format=audio_format,
+            ),
+            storage,
+        )
+        yield BatchSegment(
+            index=idx,
+            total=total,
+            text=seg_text,
+            audio_path=str(result["audio_path"]),
+            voice=str(result["voice"]),
+            source=str(result["source"]),
+            model=str(result["model"]),
+            bytes=int(result["bytes"]),
+        )
 
 
 async def seed_default_voices(storage: Storage) -> int:

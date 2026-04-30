@@ -168,7 +168,7 @@ asyncio.run(main())
 
 ### 4.1 一句话配音 demo
 
-**Claude Code 里:**
+**MCP 路径(Claude Code 里):**
 > 用 mimo.tts 把"欢迎来到小米 MiMo 的演示世界"用 苏打 的声音合成。
 
 返回的 `audio_path` 比如 `data/artifacts/tts/20260430/abc123.wav`,在 macOS 终端:
@@ -176,6 +176,8 @@ asyncio.run(main())
 ```bash
 afplay data/artifacts/tts/20260430/abc123.wav
 ```
+
+**Web 路径**(更直观):浏览器打开 <http://127.0.0.1:5173/tts> → 输入文本 → 选 苏打 → 点合成,网页里直接播放 + 下载。
 
 ### 4.2 克隆我的声音 → 朗读任意文本
 
@@ -212,20 +214,53 @@ afplay data/artifacts/tts/20260430/abc123.wav
 
 (M1 实测:视频走 URL 模式,本地视频先丢到任意 HTTP 服务器或对象存储再喂 URL。)
 
+### 4.6 长文批量配音(增量任务 1 新增)
+
+**Web 路径**(推荐,可视化进度):浏览器 `/tts` → 切到「批量切段」 Tab → 贴一段 1000 字以上长文 → 拖滑块到 100-150 字/段 → 点合成 → 每段做完立刻在页面出现并可单独播放,全部完成后在「本会话历史」可一次性回看。
+
+**SDK 路径**(脚本化):
+```python
+from mimo_mcp.api.tts import synthesize_batch
+from mimo_mcp.config import get_settings
+from mimo_mcp.storage import Storage
+
+storage = Storage(get_settings().db_path)
+await storage.init()
+async for seg in synthesize_batch("……长文……", voice="苏打", segment_max_chars=120, storage=storage):
+    print(f"段 {seg.index+1}/{seg.total}: {seg.audio_path} ({seg.bytes} B)")
+```
+
 ---
 
-## 五、Web 控制台 7 个页面用法
+## 五、Web 控制台 8 个页面用法
 
 | 页面 | URL | 你能在这里做什么 |
 |---|---|---|
 | 概览 | `/` | 看 API Key 状态 / base_url 可达性 / 鉴权 / ASR / 24h 用量 |
 | 聊天沙盒 | `/sandbox` | 切换模型(v2.5-pro / v2.5 / v2-pro / v2-flash),发文本对话验真 |
+| **文字转语音** | `/tts` | **单段或批量长文朗读 · 9 个预置 voice + 已克隆/设计的全部 · wav/mp3 · localStorage 历史** |
 | 图像 / 视频 | `/vision` | 上传一张图或填一个视频 URL,看 v2.5 输出文本理解 |
 | 音色库 | `/voices` | 浏览 / 试听 / 删除全部音色(default + clone + design) |
 | 声音克隆 | `/voices/clone` | 拖一段参考音频 + 命名 + 备注 → 一键创建 |
 | 声音设计 | `/voices/design` | 写音色 prompt + 试听文本 → 一键生成 |
 | 语音转写 | `/asr` | 上传音频做 ASR;若返回 `unavailable` 说明套餐不含此模型 |
 | 审计日志 | `/audit` | 看最近 200 次 MCP/Web 调用,5 秒自动刷新 |
+
+### 5.1 「文字转语音」页详解
+
+- **单段模式**:输入 ≤ 200 字 → 选音色 → 选 wav/mp3 → 点合成 → 页面播放器自动播放,可下载
+- **批量模式**:贴长文 → 拖动"分段字数上限"滑块(20–300)→ 合成会按句末标点自动切段 → SSE 流逐段返回,前端就绪一段播一段
+- **音色下拉**:三组(预置 / 克隆 / 设计),与「音色库」实时同步——刚克隆的 voice 立刻能在这里选用
+- **历史**:本次会话最多 20 条,localStorage 持久(刷新还在,换会话清空);每条可展开看所有段落 + 重新试听
+- **隐藏字段**:speed / style 经 Phase 0 实测当前不生效,UI 暂不暴露;SDK 仍透传,等 MiMo 修复后立即可用
+
+### 5.2 后端 TTS API(供脚本化调用)
+
+| Endpoint | 用途 |
+|---|---|
+| `POST /api/tts/synthesize` | 单段一次性,JSON 返回 `{audio_url, voice, model, bytes}` |
+| `POST /api/tts/batch` | 批量切段,SSE 流(`event: plan` / `event: segment` / `event: done` / `event: error`) |
+| `GET /api/tts/audio/<filename>` | 反代 `data/artifacts/tts/**` 与 `voice_refs/`,给 `<audio src>` 直接用 |
 
 > Web 与 MCP **共享同一份 SQLite + 同一个 voice 库** —— 在 Claude Code 里克隆出来的 voice 立刻在 Web 看得到,反之亦然。
 

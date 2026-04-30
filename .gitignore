@@ -17,6 +17,7 @@ dist/
 node_modules/
 webui/frontend/dist/
 webui/frontend/.vite/
+*.tsbuildinfo
 .DS_Store
 
 # 项目运行时数据(必须不入库:可能含语音素材、生成产物、本地数据库)

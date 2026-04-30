@@ -20,7 +20,7 @@ from mimo_mcp.config import get_settings
 from mimo_mcp.logging_setup import configure_logging
 from mimo_mcp.storage import Storage
 
-from .routers import asr, chat, usage, vision, voices
+from .routers import asr, chat, tts, usage, vision, voices
 
 log = logging.getLogger("mimo_web")
 
@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(vision.router, prefix="/api/vision", tags=["vision"])
     app.include_router(asr.router, prefix="/api/asr", tags=["asr"])
     app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
+    app.include_router(tts.router, prefix="/api/tts", tags=["tts"])
 
     dist = _frontend_dist()
     if dist.exists():

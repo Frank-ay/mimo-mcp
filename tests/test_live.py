@@ -88,3 +88,70 @@ async def test_live_image_understand() -> None:
     )
     text = (resp["choices"][0]["message"].get("content") or "")
     assert "橙" in text or "orange" in text.lower(), f"识别异常:{text!r}"
+
+
+# ---------------------------------------------------------------------------
+# 增量任务 1:Web TTS 高级路径联网测试
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_live_tts_mp3_format() -> None:
+    """合成 mp3,验证 magic 不是 RIFF 而是 MPEG ADTS / ID3。"""
+    from mimo_mcp.api import tts as api_tts
+    from mimo_mcp.config import get_settings
+    from mimo_mcp.models import TTSRequest
+    from mimo_mcp.storage import Storage
+
+    s = get_settings()
+    storage = Storage(s.db_path)
+    await storage.init()
+
+    out = await api_tts.synthesize(
+        TTSRequest(text="MP3 测试。", voice="mimo_default", audio_format="mp3"),
+        storage,
+    )
+    p = Path(out["audio_path"])
+    assert p.is_file()
+    assert p.suffix == ".mp3"
+    head = p.read_bytes()[:4]
+    # MPEG ADTS 帧头(0xFFFx)或 ID3 标签
+    assert head[:3] == b"ID3" or (head[0] == 0xFF and (head[1] & 0xE0) == 0xE0), (
+        f"非 MP3 文件,magic={head!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_tts_batch() -> None:
+    """长文按段切分,所有段都成功合成且每段是合法 wav。"""
+    from mimo_mcp.api import tts as api_tts
+    from mimo_mcp.config import get_settings
+    from mimo_mcp.storage import Storage
+
+    s = get_settings()
+    storage = Storage(s.db_path)
+    await storage.init()
+    await api_tts.seed_default_voices(storage)
+
+    text = (
+        "今天是星期三,天气晴朗。"
+        "我打算去公园里散步,顺便看看花。"
+        "傍晚回家后,我会做一顿丰盛的晚餐。"
+    )
+    segments = []
+    async for seg in api_tts.synthesize_batch(
+        text,
+        voice="mimo_default",
+        segment_max_chars=20,
+        storage=storage,
+    ):
+        segments.append(seg)
+
+    assert len(segments) >= 2, f"期望切出 ≥2 段,实际 {len(segments)}"
+    for seg in segments:
+        p = Path(seg.audio_path)
+        assert p.is_file(), f"段 {seg.index} 文件不存在"
+        assert p.read_bytes()[:4] == b"RIFF", f"段 {seg.index} 非 WAV"
+        assert seg.bytes > 1000, f"段 {seg.index} 体积异常({seg.bytes})"
+
+
