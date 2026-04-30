@@ -1,10 +1,8 @@
 # MiMo MCP Server — 产品需求文档(PRD v1.0)
 
-> 项目代号:**mimo-mcp** (内部)
-> 工作目录:`/Users/liuaiyi/Desktop/xiaomi-MIMO/`
-> 文档归属:`/Users/liuaiyi/.claude/plans/mimo-mimo-mcp-smooth-rainbow.md`
-> 撰写日期:2026-04-29
-> 状态:**关键决策已确认,准备进入实施(仅剩 §15-Q6 ASR 本地回退是否预置一个待最终确认)**
+> 项目代号:**mimo-mcp**
+> 文档归属:`docs/PRD.md`
+> 撰写日期:2026-04-29(M0 + M1 + 增量任务 1 实施完毕,内容已包含全部实测发现)
 
 **已确认的关键路径**(2026-04-29 用户拍板):
 - 实现语言:**Python 3.11 + FastMCP**(用 uv 管理依赖)
@@ -307,7 +305,7 @@ command = "/Users/liuaiyi/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
 - 聊天沙盒只做文本对话,不出音
 - 音色库页只是 list + delete
 
-而 SDK 适配层 `src/mimo_mcp/api/tts.py` 的 `synthesize` 已经实现了三模型路由(default / clone / design 各自走对应 MiMo 端点),且本仓库 `.claude/plans/...` PRD §8 表里 F4 行写着"文本 → 音频试听 + 下载"——本身就是 V1 应交付的页面,只是 M4 阶段为了保证 7 页面骨架先成型,把 TTS 入口跳过了。本任务把这块补齐,并按用户决策升级到进阶能力。
+而 SDK 适配层 `src/mimo_mcp/api/tts.py` 的 `synthesize` 已经实现了三模型路由(default / clone / design 各自走对应 MiMo 端点),且本 PRD §8 表里 F4 行写着"文本 → 音频试听 + 下载"——本身就是 V1 应交付的页面,只是 M4 阶段为了保证 7 页面骨架先成型,把 TTS 入口跳过了。本任务把这块补齐,并按用户决策升级到进阶能力。
 
 ## B. 已确认的关键决策(2026-04-30)
 
