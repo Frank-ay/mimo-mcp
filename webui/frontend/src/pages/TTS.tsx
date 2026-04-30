@@ -127,7 +127,7 @@ export default function TTS() {
       setTextBeforeRefine(original);
       setText(r.refined);
       setRefineNotice(
-        `已用 v2.5-pro 改写:${r.char_count_before} 字 → ${r.char_count_after} 字 · ${(r.latency_ms / 1000).toFixed(1)}s`,
+        `已优化为更适合朗读的版本:${r.char_count_before} → ${r.char_count_after} 字 · 耗时 ${(r.latency_ms / 1000).toFixed(1)} 秒`,
       );
     } catch (e) {
       setError(`改写失败:${e}`);
@@ -295,39 +295,59 @@ export default function TTS() {
             placeholder="在这里输入要朗读的文本..."
           />
 
-          {/* AI 改写工具条 */}
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] px-3 py-2">
-            <Sparkles size={14} className="text-[var(--color-accent)]" />
-            <span className="text-xs text-[var(--color-fg-muted)]">
-              v2.5-pro 改写
-            </span>
-            <input
-              value={refineStyle}
-              onChange={(e) => setRefineStyle(e.target.value)}
-              placeholder="风格(选填):纪录片旁白 / 活泼播报 / 古典朗诵 …"
-              className="flex-1 min-w-[160px] rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-1 text-xs"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={aiRefine}
-              disabled={refining || loading || !text.trim()}
-            >
-              {refining ? (
-                <Loader2 className="animate-spin" size={14} />
-              ) : (
-                <Sparkles size={14} />
-              )}
-              {refining ? "改写中…" : "AI 改写"}
-            </Button>
-            {textBeforeRefine !== null && (
-              <Button variant="ghost" size="sm" onClick={undoRefine}>
-                <RotateCcw size={14} /> 撤销
+          {/* 朗读优化工具条 — 让 AI 把文字改得更适合朗读 */}
+          <div className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] px-3 py-2.5">
+            <div className="mb-2 flex items-center gap-2">
+              <Sparkles size={14} className="text-[var(--color-accent)]" />
+              <span className="text-sm font-medium text-[var(--color-fg)]">
+                让朗读更自然(可选)
+              </span>
+              <span className="text-xs text-[var(--color-fg-muted)]">
+                · 数字念中文 · 英文缩写展开 · 书面语转口语 · 自动补标点
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={refineStyle}
+                onChange={(e) => setRefineStyle(e.target.value)}
+                placeholder="朗读场景(选填):新闻播报 / 儿童故事 / 纪录片旁白 …"
+                className="flex-1 min-w-[200px] rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-1.5 text-xs"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={aiRefine}
+                disabled={refining || loading || !text.trim()}
+                title="用 mimo-v2.5-pro 模型把当前文本改得更适合 TTS 朗读"
+              >
+                {refining ? (
+                  <Loader2 className="animate-spin" size={14} />
+                ) : (
+                  <Sparkles size={14} />
+                )}
+                {refining ? "AI 优化中…" : "AI 优化文本"}
               </Button>
+              {textBeforeRefine !== null && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={undoRefine}
+                  title="还原成优化前的原文"
+                >
+                  <RotateCcw size={14} /> 还原原文
+                </Button>
+              )}
+            </div>
+            {!refineNotice && textBeforeRefine === null && (
+              <div className="mt-1.5 text-xs text-[var(--color-fg-muted)]">
+                适合:含数字/英文缩写、书面语重、长文。不需要时直接合成即可。
+              </div>
             )}
           </div>
           {refineNotice && (
-            <div className="mt-2 text-xs text-emerald-400">{refineNotice}</div>
+            <div className="mt-2 text-xs text-emerald-400">
+              ✓ {refineNotice}
+            </div>
           )}
 
           <div className="mt-3 flex items-center justify-between">
