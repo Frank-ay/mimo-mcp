@@ -96,6 +96,27 @@ async def image_understand(
 # ---------------------------------------------------------------------------
 
 
+async def _probe_video_codec(path: Path) -> str:
+    """用 ffprobe 探视频流的 codec_name,失败时返回空字符串。"""
+    if shutil.which("ffprobe") is None:
+        return ""
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_name",
+        "-of", "csv=p=0",
+        str(path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _ = await proc.communicate()
+    return out.decode("utf-8", errors="replace").strip().lower()
+
+
+# MiMo vision 兼容的视频编码白名单(实测 AV1 会报 "Multimodal data is corrupted")
+_COMPATIBLE_CODECS = {"h264", "avc1", "hevc", "h265"}
+
+
 async def _ffmpeg_compress(src: Path) -> Path:
     """超大视频自动压缩:截短到 90 秒 + 长边 720p + CRF 28。"""
     if shutil.which("ffmpeg") is None:
@@ -233,6 +254,15 @@ async def _yt_dlp_download(url: str) -> Path:
         else:
             raise RuntimeError(f"yt-dlp 下载完成但找不到产物文件:{path_str}")
     log.info("yt-dlp 下载完成:%s (%d bytes)", final, final.stat().st_size)
+
+    # 兼容性兜底:B 站等站点可能给 AV1 编码,MiMo 解不了。
+    # 检测 codec,非 H.264 / H.265 系列就强制走一次 ffmpeg 转码到 H.264。
+    codec = await _probe_video_codec(final)
+    if codec and codec not in _COMPATIBLE_CODECS:
+        log.warning(
+            "yt-dlp 产物是 %s 编码,MiMo vision 不兼容,强制转 H.264 mp4", codec,
+        )
+        final = await _ffmpeg_compress(final)
     return final
 
 
