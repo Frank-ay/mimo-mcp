@@ -3,7 +3,7 @@
 > 把小米 MiMo 的全模态能力(对话 / 图像 / 视频 / TTS / 声音克隆 / 声音设计 / ASR)接到日常工作流。
 >
 > 文档配套版本:**v0.1**(M0 仓库脚手架 + M1 SDK 适配层已完成)
-> PRD 全文:[`/.claude/plans/mimo-mimo-mcp-smooth-rainbow.md`](../.claude/plans/mimo-mimo-mcp-smooth-rainbow.md)
+> PRD 全文:[`docs/PRD.md`](PRD.md)
 
 ---
 
@@ -355,7 +355,7 @@ PY
 
 ## 九、参考链接
 
-- PRD 全文:[/.claude/plans/mimo-mimo-mcp-smooth-rainbow.md](../.claude/plans/mimo-mimo-mcp-smooth-rainbow.md)
+- PRD 全文:[docs/PRD.md](PRD.md)
 - API 调研笔记:[docs/api-research.md](api-research.md)
 - 官方文档:<https://platform.xiaomimimo.com/docs/api/chat/openai-api>
 - 官方模型矩阵:<https://mimo.xiaomi.com/>

@@ -1,9 +1,19 @@
 # mimo-mcp
 
-把小米 MiMo 全模态能力(Chat / 图像 / 视频 / TTS / 声音克隆 / 声音设计 / ASR)封装为一个 stdio MCP Server,供 **Claude Code** 与 **Codex** 同时调用,并附带本地 Web 管理面板。
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-stdio-orange.svg)](https://modelcontextprotocol.io/)
 
-> 文档位置:[`/.claude/plans/mimo-mimo-mcp-smooth-rainbow.md`](../.claude/plans/mimo-mimo-mcp-smooth-rainbow.md)(PRD v1.0)
-> 当前阶段:**M0 仓库脚手架已完成**。M1 将用真 API key 实测各端点并填充 `client.py` 与 `api/*.py` 中的 `NotImplementedError`。
+把小米 [MiMo](https://platform.xiaomimimo.com/) 的全模态能力——多模态对话 / 图像 / 视频理解 / TTS / 声音克隆 / 声音设计 / ASR——封装为一个 **stdio MCP Server**,让 [Claude Code](https://docs.claude.com/en/docs/claude-code) 与 [Codex](https://github.com/openai/codex) 等编程工具直接当 tool 调用,并附带一个**本地 Web 管理面板**(8 个页面:概览 / 沙盒 / 文字转语音 / 图像视频 / 音色库 / 克隆 / 设计 / 审计)。
+
+**亮点**
+
+- 一处实现,Claude Code & Codex 都能用
+- 11 个 MCP tool 覆盖 F1-F8 全模态能力
+- 本地 SQLite 持久化音色库,克隆 / 设计的 voice 一次创建到处用
+- `mimo.tts` 自动按 voice 类型路由到对应 MiMo 模型(default → tts / clone → voiceclone / design → voicedesign)
+- 含 Token Plan 套餐适配 + thinking 模型 max_tokens 兜底等踩坑经验
+- Web 控制台支持长文按句末标点自动切段批量合成(SSE 流式渲染)
 
 ---
 
