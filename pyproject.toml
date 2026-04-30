@@ -19,6 +19,7 @@ dependencies = [
     "anyio>=4.3.0",
     "rich>=13.7.0",
     "structlog>=24.1.0",
+    "yt-dlp>=2026.3.17",
 ]
 
 [project.scripts]

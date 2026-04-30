@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-04-30 增量任务 2 — 视频理解输入归一化
+
+### 实测确认
+
+| 输入形式 | MiMo 接受程度 |
+|---|---|
+| `data:video/mp4;base64,...` DataURL | ✅ 稳定可用,recommended |
+| 直链 mp4 URL(http(s)) | ⚠️ MiMo 后端去拉外网时会随机 400 `failed to download url data`(早上能用现在可能不能,不可靠) |
+| B 站 / YouTube / 抖音 / 小红书等"页面型" URL | ❌ MiMo 直接拿不到 mp4(返回 HTML) |
+| 本地路径 | n/a(需客户端转 DataURL) |
+
+### 实施决策
+
+统一所有"非 DataURL 输入"在客户端落地为本地 mp4 → base64 → DataURL,完全绕开
+MiMo 服务器去拉外链。直链用 `httpx.stream` 本地下载,B 站等用 `yt-dlp` 下载。
+
+- 文件大小上限 50 MB(base64 后 ~67 MB,够 30 秒-2 分钟视频)
+- yt-dlp 优先选 `best[ext=mp4][filesize<40M]`,避免 4K 几百 MB
+
+---
+
 ## 2026-04-30 增量任务 1 / Phase 0 — TTS 高级特性探针
 
 ### R1 stream=true 的 SSE 协议

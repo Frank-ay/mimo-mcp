@@ -122,6 +122,27 @@ async def test_live_tts_mp3_format() -> None:
 
 
 @pytest.mark.asyncio
+async def test_live_video_local_path() -> None:
+    """本地 mp4 → base64 DataURL → MiMo 视频理解。"""
+    from mimo_mcp.api.vision import video_understand
+
+    video = Path("data/artifacts/uploads/_test_video.mp4")
+    if not video.is_file():
+        pytest.skip("缺少测试视频 data/artifacts/uploads/_test_video.mp4")
+
+    # 注意:不要让 thinking 模型死磕字数,会反复 refining 耗光 token
+    resp = await video_understand(
+        str(video),
+        "简单描述这段视频里的角色和场景,一两句话即可。",
+        max_tokens=6000,
+    )
+    text = (resp["choices"][0]["message"].get("content") or "").strip()
+    assert len(text) > 0, f"识别为空,finish={resp['choices'][0]['finish_reason']}"
+    # 视频里是 Big Buck Bunny 兔子 / 草地 / 蝴蝶
+    assert any(kw in text for kw in ("兔", "草", "蝴蝶", "动物")), f"识别异常:{text!r}"
+
+
+@pytest.mark.asyncio
 async def test_live_tts_batch() -> None:
     """长文按段切分,所有段都成功合成且每段是合法 wav。"""
     from mimo_mcp.api import tts as api_tts

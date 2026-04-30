@@ -135,14 +135,21 @@ async def mimo_image_understand(
 # ---------------------------------------------------------------------------
 # F3 Video
 # ---------------------------------------------------------------------------
-@mcp.tool(name="mimo.video_understand", description="视频理解。优先 URL 模式,M1 后实测决定是否需要先 upload。")
+@mcp.tool(
+    name="mimo.video_understand",
+    description=(
+        "视频理解。video 参数支持 4 种形式自动识别:"
+        "(a) 直链 mp4 URL;(b) B 站/YouTube/抖音/小红书等视频站链接(yt-dlp 自动下载);"
+        "(c) 本地路径(绝对/相对/~);(d) data:video/mp4;base64,... DataURL。"
+    ),
+)
 async def mimo_video_understand(
-    video_url: str,
+    video: str,
     prompt: str,
     model: str | None = None,
 ) -> dict[str, Any]:
     try:
-        result = await api_vision.video_understand(video_url, prompt, model=model)
+        result = await api_vision.video_understand(video, prompt, model=model)
         await _audit("mimo.video_understand", "ok", model=model)
         return result
     except Exception as e:

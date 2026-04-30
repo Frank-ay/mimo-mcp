@@ -1,11 +1,17 @@
-"""图像 / 视频理解。"""
+"""图像 / 视频理解 Web 路由。
+
+视频端点(2026-04-30 升级)同时接受三种输入,前端二选一即可:
+- multipart 文件上传(本地视频)
+- form 字段 ``video_url``:直链 mp4 / B 站 / YouTube / 抖音 等
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Form, UploadFile
+from fastapi import APIRouter, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from mimo_mcp.api import vision
 from mimo_mcp.config import get_settings
@@ -38,8 +44,33 @@ async def image(
 
 @router.post("/video")
 async def video(
-    video_url: str = Form(...),
     prompt: str = Form(...),
     model: str | None = Form(None),
+    video_url: str | None = Form(None),
+    file: UploadFile | None = None,
 ) -> dict:
-    return await vision.video_understand(video_url, prompt, model=model)
+    """同时支持文件上传 / URL 两种输入,二选一。"""
+    if file is not None and getattr(file, "filename", None):
+        target = _save_upload(file, "vid")
+        target.write_bytes(await file.read())
+        return await vision.video_understand(str(target), prompt, model=model)
+
+    if video_url:
+        return await vision.video_understand(video_url, prompt, model=model)
+
+    raise HTTPException(
+        status_code=400,
+        detail="必须提供 file(本地视频)或 video_url(直链 / B 站等)之一",
+    )
+
+
+class VideoUrlBody(BaseModel):
+    video_url: str
+    prompt: str
+    model: str | None = None
+
+
+@router.post("/video/url")
+async def video_via_json(body: VideoUrlBody) -> dict:
+    """JSON 路径:让脚本/curl 调用更顺手。"""
+    return await vision.video_understand(body.video_url, body.prompt, model=body.model)

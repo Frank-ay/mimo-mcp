@@ -137,6 +137,16 @@ export const api = {
     request<unknown>("/vision/image", { method: "POST", body: form }),
   videoUnderstand: (form: FormData) =>
     request<unknown>("/vision/video", { method: "POST", body: form }),
+  videoUnderstandUrl: (body: {
+    video_url: string;
+    prompt: string;
+    model?: string;
+  }) =>
+    request<unknown>("/vision/video/url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   asr: (form: FormData) =>
     request<unknown>("/asr", { method: "POST", body: form }),
 

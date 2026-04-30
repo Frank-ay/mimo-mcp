@@ -210,9 +210,24 @@ afplay data/artifacts/tts/20260430/abc123.wav
 
 ### 4.5 视频内容总结 + 旁白
 
-> 用 mimo.video_understand 分析 https://example.com/clip.mp4,生成 100 字解说稿,然后用 mimo.tts(voice="白桦")合成。
+`mimo.video_understand` 现在的 `video` 参数自动识别 4 种输入:
 
-(M1 实测:视频走 URL 模式,本地视频先丢到任意 HTTP 服务器或对象存储再喂 URL。)
+```
+mimo.video_understand(video="~/Desktop/clip.mp4", prompt="...")           # 本地路径
+mimo.video_understand(video="https://www.bilibili.com/video/BVxxxx/", ...)  # B 站(yt-dlp)
+mimo.video_understand(video="https://example.com/clip.mp4", ...)            # 直链(自动下载)
+mimo.video_understand(video="data:video/mp4;base64,...", ...)               # DataURL
+```
+
+后端会:
+1. 把所有输入归一化成 base64 DataURL(最稳定)
+2. B 站/YouTube/抖音 等页面型链接走 yt-dlp 下载
+3. 直链 mp4 走 httpx.stream 本地下载
+4. 本地路径 / DataURL 直接读
+
+文件 ≤ 50 MB(原始字节),约对应 30 秒-2 分钟 720p 视频。
+
+(实测发现:MiMo 服务端对外网 URL 的主动下载不可靠,所以本仓库统一在客户端落地后再发 DataURL。详见 `docs/api-research.md`。)
 
 ### 4.6 长文批量配音(增量任务 1 新增)
 
@@ -239,7 +254,7 @@ async for seg in synthesize_batch("……长文……", voice="苏打", segment_
 | 概览 | `/` | 看 API Key 状态 / base_url 可达性 / 鉴权 / ASR / 24h 用量 |
 | 聊天沙盒 | `/sandbox` | 切换模型(v2.5-pro / v2.5 / v2-pro / v2-flash),发文本对话验真 |
 | **文字转语音** | `/tts` | **单段或批量长文朗读 · 9 个预置 voice + 已克隆/设计的全部 · wav/mp3 · localStorage 历史** |
-| 图像 / 视频 | `/vision` | 上传一张图或填一个视频 URL,看 v2.5 输出文本理解 |
+| 图像 / 视频 | `/vision` | 上传图片;视频支持 **本地文件** 或 **B 站 / YouTube / 抖音 / 小红书 URL**(yt-dlp 自动下载),最大 50 MB |
 | 音色库 | `/voices` | 浏览 / 试听 / 删除全部音色(default + clone + design) |
 | 声音克隆 | `/voices/clone` | 拖一段参考音频 + 命名 + 备注 → 一键创建 |
 | 声音设计 | `/voices/design` | 写音色 prompt + 试听文本 → 一键生成 |
