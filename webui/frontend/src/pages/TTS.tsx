@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Download,
+  Eraser,
   Loader2,
   Play,
   RotateCcw,
@@ -282,10 +283,32 @@ export default function TTS() {
               <CardDesc>
                 {text.length} 字
                 {mode === "batch" &&
-                  ` · 预览 ${api ? "" : ""}约 ${Math.max(1, Math.ceil(text.length / segMax))} 段`}
+                  ` · 预览约 ${Math.max(1, Math.ceil(text.length / segMax))} 段`}
               </CardDesc>
             </div>
-            <Volume2 size={20} className="text-[var(--color-fg-muted)]" />
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  if (text.length > 80 && !confirm("确定清空当前文本?")) return;
+                  setText("");
+                  setSingle(null);
+                  setBatch(null);
+                  setError("");
+                  setRefineNotice("");
+                  setTextBeforeRefine(null);
+                }}
+                disabled={loading || refining || text.length === 0}
+                title="一键清空文本"
+              >
+                <Eraser size={14} /> 清空
+              </Button>
+              <Volume2
+                size={18}
+                className="ml-1 text-[var(--color-fg-muted)]"
+              />
+            </div>
           </CardHeader>
           <textarea
             value={text}
