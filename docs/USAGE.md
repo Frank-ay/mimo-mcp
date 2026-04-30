@@ -229,7 +229,38 @@ mimo.video_understand(video="data:video/mp4;base64,...", ...)               # Da
 
 (实测发现:MiMo 服务端对外网 URL 的主动下载不可靠,所以本仓库统一在客户端落地后再发 DataURL。详见 `docs/api-research.md`。)
 
-### 4.6 长文批量配音(增量任务 1 新增)
+### 4.6 长视频分段分析(突破 50 MB 上限)
+
+MiMo 单次请求 base64 ≤ 50 MB(实测约对应 35 MB 原始 / 90 秒 720p)。要分析 5 分钟 / 1GB 视频,用「分段分析」模式:
+
+**Web 路径**(推荐):浏览器 `/vision` → 视频模式 → 勾选「长视频分段分析」 → 拖动滑块设每段时长(20-90 秒)→ 上传文件或贴 URL → 实时看每段处理进度 + 最终综合输出。
+
+**SDK 路径**(脚本化):
+```python
+from mimo_mcp.api.vision import video_understand_chunked
+
+async for evt in video_understand_chunked(
+    "/path/to/long_video.mp4",
+    "描述这段视频",
+    segment_seconds=50,
+):
+    if evt["kind"] == "plan":
+        print(f"切成 {evt['total']} 段,总时长 {evt['duration']:.0f}s")
+    elif evt["kind"] == "segment":
+        print(f"段 {evt['index']+1}: {evt['description'][:80]}…")
+    elif evt["kind"] == "summary":
+        print("综合分析:", evt["text"])
+```
+
+**API 路径**(curl + SSE):
+```bash
+curl -N -X POST http://127.0.0.1:7801/api/vision/video/chunked \
+  -F 'file=@long.mp4' -F 'prompt=描述视频' -F 'segment_seconds=50'
+```
+
+实测 47 MB / 107 秒 AV1 视频 → 切 2 段 → 完整综合分析,总耗时 ~3 分钟。
+
+### 4.7 长文批量配音(增量任务 1 新增)
 
 **Web 路径**(推荐,可视化进度):浏览器 `/tts` → 切到「批量切段」 Tab → 贴一段 1000 字以上长文 → 拖滑块到 100-150 字/段 → 点合成 → 每段做完立刻在页面出现并可单独播放,全部完成后在「本会话历史」可一次性回看。
 
@@ -254,7 +285,7 @@ async for seg in synthesize_batch("……长文……", voice="苏打", segment_
 | 概览 | `/` | 看 API Key 状态 / base_url 可达性 / 鉴权 / ASR / 24h 用量 |
 | 聊天沙盒 | `/sandbox` | 切换模型(v2.5-pro / v2.5 / v2-pro / v2-flash),发文本对话验真 |
 | **文字转语音** | `/tts` | **单段或批量长文朗读 · 9 个预置 voice + 已克隆/设计的全部 · wav/mp3 · localStorage 历史** |
-| 图像 / 视频 | `/vision` | 上传图片;视频支持 **本地文件** 或 **B 站 / YouTube / 抖音 / 小红书 URL**(yt-dlp 自动下载),最大 50 MB |
+| 图像 / 视频 | `/vision` | 上传图片;视频支持 **本地文件** 或 **B 站 / YouTube / 抖音 / 小红书 URL**(yt-dlp 自动下载)。单次 ≤ 35 MB / 90 秒。**勾「长视频分段分析」可分析任意时长视频**(自动切段+综合,突破 50 MB 上限) |
 | 音色库 | `/voices` | 浏览 / 试听 / 删除全部音色(default + clone + design) |
 | 声音克隆 | `/voices/clone` | 拖一段参考音频 + 命名 + 备注 → 一键创建 |
 | 声音设计 | `/voices/design` | 写音色 prompt + 试听文本 → 一键生成 |

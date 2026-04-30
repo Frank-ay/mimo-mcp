@@ -113,6 +113,40 @@ export interface BatchHandlers {
   onDone?: () => void;
 }
 
+// ---- 长视频分段分析事件 ----
+export interface ChunkedPlanEvent {
+  kind: "plan";
+  total: number;
+  duration: number;
+  segment_seconds: number;
+  segments: { index: number; start: number; end: number; bytes: number }[];
+}
+
+export interface ChunkedSegmentEvent {
+  kind: "segment";
+  index: number;
+  start: number;
+  end: number;
+  description: string;
+  bytes: number;
+}
+
+export interface ChunkedSummaryEvent {
+  kind: "summary";
+  text: string;
+  total: number;
+  duration: number;
+  segments: ChunkedSegmentEvent[];
+}
+
+export interface ChunkedHandlers {
+  onPlan?: (e: ChunkedPlanEvent) => void;
+  onSegment?: (e: ChunkedSegmentEvent) => void;
+  onSummary?: (e: ChunkedSummaryEvent) => void;
+  onError?: (msg: string) => void;
+  onDone?: () => void;
+}
+
 // ---- 端点 ----
 export const api = {
   health: () => request<HealthResult>("/usage/health"),
@@ -147,6 +181,58 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+
+  // 长视频分段分析:SSE 流式返回,绕开 50 MB 上限
+  videoChunked: async (
+    form: FormData,
+    handlers: ChunkedHandlers,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const resp = await fetch(`${BASE}/vision/video/chunked`, {
+      method: "POST",
+      body: form,
+      signal,
+    });
+    if (!resp.ok || !resp.body) {
+      handlers.onError?.(await resp.text().catch(() => resp.statusText));
+      return;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let sep = buf.indexOf("\n\n");
+      while (sep !== -1) {
+        const raw = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        sep = buf.indexOf("\n\n");
+        let event = "message";
+        let data = "";
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        try {
+          const obj = JSON.parse(data);
+          if (event === "plan") handlers.onPlan?.(obj as ChunkedPlanEvent);
+          else if (event === "segment")
+            handlers.onSegment?.(obj as ChunkedSegmentEvent);
+          else if (event === "summary")
+            handlers.onSummary?.(obj as ChunkedSummaryEvent);
+          else if (event === "error")
+            handlers.onError?.(obj.message ?? "未知错误");
+          else if (event === "done") handlers.onDone?.();
+        } catch {
+          // ignore parse error, keep reading
+        }
+      }
+    }
+  },
+
   asr: (form: FormData) =>
     request<unknown>("/asr", { method: "POST", body: form }),
 

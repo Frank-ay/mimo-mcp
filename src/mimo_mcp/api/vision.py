@@ -113,6 +113,25 @@ async def _probe_video_codec(path: Path) -> str:
     return out.decode("utf-8", errors="replace").strip().lower()
 
 
+async def _probe_video_duration(path: Path) -> float:
+    """ffprobe 探视频时长(秒)。失败返回 0。"""
+    if shutil.which("ffprobe") is None:
+        return 0.0
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "csv=p=0",
+        str(path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _ = await proc.communicate()
+    try:
+        return float(out.decode().strip())
+    except (ValueError, AttributeError):
+        return 0.0
+
+
 # MiMo vision 兼容的视频编码白名单(实测 AV1 会报 "Multimodal data is corrupted")
 _COMPATIBLE_CODECS = {"h264", "avc1", "hevc", "h265"}
 
@@ -354,3 +373,186 @@ async def video_understand(
     }
     async with MimoClient(settings) as client:
         return await client.chat(body)
+
+
+# ---------------------------------------------------------------------------
+# 长视频分段分析(突破 MiMo 单次 50MB 上限)
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_to_local_path(video: str) -> Path:
+    """跟 resolve_video_input 类似但只返回本地路径,**不做压缩**——
+
+    分段流程要拿到原始视频自己切,如果先压缩(截到 90 秒)就把后段丢了。
+    """
+    if video.startswith("data:"):
+        try:
+            _header, data = video.split(",", 1)
+        except ValueError as e:
+            raise ValueError("DataURL 格式错") from e
+        settings = get_settings()
+        out_dir = settings.artifacts_dir / "uploads" / datetime.now(timezone.utc).strftime("%Y%m%d")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / f"data_{uuid.uuid4().hex[:10]}.mp4"
+        out.write_bytes(base64.b64decode(data))
+        return out
+
+    if video.startswith(("http://", "https://")):
+        if _is_page_host(video):
+            return await _yt_dlp_download(video)
+        return await _download_direct(video)
+
+    path = Path(video).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"本地视频不存在:{path}")
+    return path
+
+
+async def _ffmpeg_segment(src: Path, segment_seconds: int) -> list[tuple[Path, float, float]]:
+    """ffmpeg 一次切多段(同时降码到 H.264 + 720p),保证每段 ≤ 35 MB。"""
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("分段功能需要 ffmpeg,请先 brew install ffmpeg")
+
+    duration = await _probe_video_duration(src)
+    if duration <= 0:
+        raise RuntimeError(f"无法读取视频时长(可能格式损坏):{src.name}")
+
+    out_dir = src.parent / f"{src.stem}_chunks_{uuid.uuid4().hex[:6]}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_template = str(out_dir / "part_%03d.mp4")
+
+    scale = (
+        f"scale='min({_COMPRESS_MAX_DIM},iw)':'min({_COMPRESS_MAX_DIM},ih)':"
+        "force_original_aspect_ratio=decrease:force_divisible_by=2"
+    )
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(src),
+        "-vf", scale,
+        "-c:v", "libx264", "-crf", str(_COMPRESS_CRF), "-preset", "veryfast",
+        "-c:a", "aac", "-b:a", "64k",
+        "-f", "segment",
+        "-segment_time", str(segment_seconds),
+        "-reset_timestamps", "1",
+        "-movflags", "+faststart",
+        out_template,
+    ]
+    log.info("ffmpeg 切段 + 转码:%s → %s/(每段 %ds)",
+             src.name, out_dir.name, segment_seconds)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg 切段失败:{stderr.decode('utf-8', errors='replace')[:300]}"
+        )
+
+    parts = sorted(out_dir.glob("part_*.mp4"))
+    if not parts:
+        raise RuntimeError("切段成功但找不到产物文件,可能视频太短")
+
+    result: list[tuple[Path, float, float]] = []
+    for i, p in enumerate(parts):
+        start = float(i * segment_seconds)
+        end = min(start + float(segment_seconds), duration)
+        result.append((p, start, end))
+    return result
+
+
+async def video_understand_chunked(
+    video: str,
+    prompt: str,
+    *,
+    segment_seconds: int = 50,
+) -> AsyncIterator[dict[str, Any]]:
+    """长视频分段分析,绕开 MiMo 单次 50 MB 上限。
+
+    yield 4 种事件,每个 dict 用 ``kind`` 字段区分:
+    - ``plan``:总段数 + 每段时间区间
+    - ``segment``:单段处理完(含描述)
+    - ``summary``:综合后的完整分析
+    """
+    from .chat import chat_completion
+    from ..models import ChatMessage, ChatRequest
+
+    settings = get_settings()
+    src = await _resolve_to_local_path(video)
+    duration = await _probe_video_duration(src)
+    chunks = await _ffmpeg_segment(src, segment_seconds)
+    total = len(chunks)
+    log.info("长视频分段:%d 段,总时长 %.1f s", total, duration)
+
+    yield {
+        "kind": "plan",
+        "total": total,
+        "duration": duration,
+        "segment_seconds": segment_seconds,
+        "segments": [
+            {"index": i, "start": s, "end": e, "bytes": p.stat().st_size}
+            for i, (p, s, e) in enumerate(chunks)
+        ],
+    }
+
+    descriptions: list[dict[str, Any]] = []
+    for i, (chunk_path, start, end) in enumerate(chunks):
+        seg_prompt = (
+            f"以下是一段长视频被切出的第 {i + 1}/{total} 段"
+            f"(约 {start:.0f}-{end:.0f} 秒)。{prompt}"
+        )
+        try:
+            result = await video_understand(
+                str(chunk_path),
+                seg_prompt,
+                max_tokens=4096,
+            )
+            desc = (result["choices"][0]["message"].get("content") or "").strip()
+        except Exception as e:
+            desc = f"(本段分析失败:{e})"
+            log.warning("段 %d/%d 分析失败:%s", i + 1, total, e)
+
+        descriptions.append({
+            "index": i,
+            "start": start,
+            "end": end,
+            "description": desc,
+            "bytes": chunk_path.stat().st_size,
+        })
+        yield {"kind": "segment", **descriptions[-1]}
+
+    listing = "\n".join(
+        f"[{d['start']:.0f}-{d['end']:.0f}秒] {d['description']}" for d in descriptions
+    )
+    summary_prompt = f"""我把一段时长约 {duration:.0f} 秒的视频按 {segment_seconds} 秒切成了 {total} 段,逐段做了视频理解。请基于下面这 {total} 段描述,综合写出一段**完整、连贯**的视频分析。
+
+要求:
+1. 还原视频的整体叙事(开头 → 中间 → 结尾的时间线)
+2. 突出关键场景、画面变化、情绪转折
+3. 不要逐段重复也不要加段号,要把分段内容融合成一段流畅的中文
+4. 用户原始提问:{prompt}
+
+各段描述如下:
+{listing}
+"""
+    try:
+        chat_resp = await chat_completion(ChatRequest(
+            messages=[ChatMessage(role="user", content=summary_prompt)],
+            model=settings.default_text_model,
+            max_tokens=8192,
+        ))
+        summary = (chat_resp["choices"][0]["message"].get("content") or "").strip()
+        if not summary:
+            finish = chat_resp["choices"][0].get("finish_reason")
+            summary = f"(综合输出为空,finish={finish}。请直接看下方各段描述)"
+    except Exception as e:
+        summary = f"(综合失败:{e}。请直接看下方各段描述)"
+
+    yield {
+        "kind": "summary",
+        "text": summary,
+        "total": total,
+        "duration": duration,
+        "segments": descriptions,
+    }

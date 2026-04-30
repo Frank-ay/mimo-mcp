@@ -1,17 +1,23 @@
 """图像 / 视频理解 Web 路由。
 
-视频端点(2026-04-30 升级)同时接受三种输入,前端二选一即可:
+视频端点同时接受三种输入,前端二选一即可:
 - multipart 文件上传(本地视频)
 - form 字段 ``video_url``:直链 mp4 / B 站 / YouTube / 抖音 等
+
+长视频分段分析(2026-05-01):
+- POST /api/vision/video/chunked  SSE,绕开 50MB 上限,任意时长视频可分析
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from mimo_mcp.api import vision
 from mimo_mcp.client import MimoAPIError
@@ -93,3 +99,80 @@ class VideoUrlBody(BaseModel):
 async def video_via_json(body: VideoUrlBody) -> dict:
     """JSON 路径:让脚本/curl 调用更顺手。"""
     return await _video_understand_safely(body.video_url, body.prompt, body.model)
+
+
+# ---------------------------------------------------------------------------
+# 长视频分段分析(SSE 流式返回)
+# ---------------------------------------------------------------------------
+
+
+class ChunkedBody(BaseModel):
+    video_url: str | None = None
+    prompt: str = Field(..., min_length=1)
+    segment_seconds: int = Field(default=50, ge=10, le=120)
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _chunked_stream(video: str, prompt: str, segment_seconds: int) -> Any:
+    """把 video_understand_chunked 的 yield 包装成 SSE 文本流。"""
+    try:
+        async for evt in vision.video_understand_chunked(
+            video, prompt, segment_seconds=segment_seconds,
+        ):
+            yield _sse(evt["kind"], evt)
+    except (ValueError, FileNotFoundError) as e:
+        yield _sse("error", {"status": 400, "message": str(e)})
+    except RuntimeError as e:
+        yield _sse("error", {"status": 502, "message": str(e)})
+    except MimoAPIError as e:
+        yield _sse("error", {"status": e.status, "message": str(e)})
+    except Exception as e:
+        yield _sse("error", {"status": 500, "message": f"未知错误:{e}"})
+    yield _sse("done", {})
+
+
+@router.post("/video/chunked")
+async def video_chunked_upload(
+    prompt: str = Form(...),
+    segment_seconds: int = Form(50),
+    video_url: str | None = Form(None),
+    file: UploadFile | None = None,
+) -> StreamingResponse:
+    """长视频分段分析(突破 50 MB 上限)。同时支持文件上传 / URL。"""
+    if file is not None and getattr(file, "filename", None):
+        target = _save_upload(file, "longvid")
+        target.write_bytes(await file.read())
+        video_input: str = str(target)
+    elif video_url:
+        video_input = video_url
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="必须提供 file(本地视频)或 video_url 之一",
+        )
+
+    if not (10 <= segment_seconds <= 120):
+        raise HTTPException(
+            status_code=400, detail="segment_seconds 必须在 10-120 秒之间"
+        )
+
+    return StreamingResponse(
+        _chunked_stream(video_input, prompt, segment_seconds),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/video/chunked/url")
+async def video_chunked_via_json(body: ChunkedBody) -> StreamingResponse:
+    """JSON 路径(脚本/curl 友好)。"""
+    if not body.video_url:
+        raise HTTPException(status_code=400, detail="video_url 必填")
+    return StreamingResponse(
+        _chunked_stream(body.video_url, body.prompt, body.segment_seconds),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
