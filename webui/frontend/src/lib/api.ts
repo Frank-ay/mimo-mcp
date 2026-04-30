@@ -150,6 +150,21 @@ export const api = {
   asr: (form: FormData) =>
     request<unknown>("/asr", { method: "POST", body: form }),
 
+  // 用 v2.5-pro 改写朗读文本(口语化、补标点、数字念法等)
+  ttsRefine: (body: { text: string; style?: string }) =>
+    request<{
+      original: string;
+      refined: string;
+      char_count_before: number;
+      char_count_after: number;
+      latency_ms: number;
+      tokens: { input: number; output: number; reasoning: number };
+    }>("/tts/refine", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
   // TTS 单段一次性
   ttsSynthesize: (body: TTSBody) =>
     request<TTSResult>("/tts/synthesize", {

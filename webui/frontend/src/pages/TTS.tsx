@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Loader2, Play, Trash2, Volume2 } from "lucide-react";
+import {
+  Download,
+  Loader2,
+  Play,
+  RotateCcw,
+  Sparkles,
+  Trash2,
+  Volume2,
+} from "lucide-react";
 import {
   api,
   type AudioFormat,
@@ -47,7 +55,10 @@ function loadHistory(): HistoryItem[] {
 
 function saveHistory(items: HistoryItem[]) {
   try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, HISTORY_MAX)));
+    localStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify(items.slice(0, HISTORY_MAX)),
+    );
   } catch {
     // localStorage 满或被禁,直接吞
   }
@@ -63,15 +74,25 @@ export default function TTS() {
   const [segMax, setSegMax] = useState(120);
 
   const [single, setSingle] = useState<TTSResult | null>(null);
-  const [batch, setBatch] = useState<{ total: number; items: BatchSegmentEvent[] } | null>(null);
+  const [batch, setBatch] = useState<{
+    total: number;
+    items: BatchSegmentEvent[];
+  } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const [refineStyle, setRefineStyle] = useState("");
+  const [textBeforeRefine, setTextBeforeRefine] = useState<string | null>(null);
+  const [refineNotice, setRefineNotice] = useState("");
   const [error, setError] = useState("");
 
   const [history, setHistory] = useState<HistoryItem[]>(() => loadHistory());
   const audioRef = useRef<HTMLAudioElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const voicesQ = useQuery({ queryKey: ["voices"], queryFn: () => api.voices() });
+  const voicesQ = useQuery({
+    queryKey: ["voices"],
+    queryFn: () => api.voices(),
+  });
   const grouped = useMemo(() => {
     const all = voicesQ.data ?? [];
     return {
@@ -87,6 +108,40 @@ export default function TTS() {
 
   function pushHistory(item: HistoryItem) {
     setHistory((prev) => [item, ...prev].slice(0, HISTORY_MAX));
+  }
+
+  async function aiRefine() {
+    if (!text.trim()) {
+      setError("请先输入文本再改写");
+      return;
+    }
+    setRefining(true);
+    setError("");
+    setRefineNotice("");
+    const original = text;
+    try {
+      const r = await api.ttsRefine({
+        text: original,
+        style: refineStyle.trim() || undefined,
+      });
+      setTextBeforeRefine(original);
+      setText(r.refined);
+      setRefineNotice(
+        `已用 v2.5-pro 改写:${r.char_count_before} 字 → ${r.char_count_after} 字 · ${(r.latency_ms / 1000).toFixed(1)}s`,
+      );
+    } catch (e) {
+      setError(`改写失败:${e}`);
+    } finally {
+      setRefining(false);
+    }
+  }
+
+  function undoRefine() {
+    if (textBeforeRefine !== null) {
+      setText(textBeforeRefine);
+      setTextBeforeRefine(null);
+      setRefineNotice("");
+    }
   }
 
   async function runSingle() {
@@ -113,7 +168,9 @@ export default function TTS() {
         total_bytes: r.bytes,
       });
       // 自动播放
-      requestAnimationFrame(() => audioRef.current?.play().catch(() => undefined));
+      requestAnimationFrame(() =>
+        audioRef.current?.play().catch(() => undefined),
+      );
     } catch (e) {
       setError(String(e));
     } finally {
@@ -224,7 +281,8 @@ export default function TTS() {
               <CardTitle>朗读文本</CardTitle>
               <CardDesc>
                 {text.length} 字
-                {mode === "batch" && ` · 预览 ${api ? "" : ""}约 ${Math.max(1, Math.ceil(text.length / segMax))} 段`}
+                {mode === "batch" &&
+                  ` · 预览 ${api ? "" : ""}约 ${Math.max(1, Math.ceil(text.length / segMax))} 段`}
               </CardDesc>
             </div>
             <Volume2 size={20} className="text-[var(--color-fg-muted)]" />
@@ -236,14 +294,57 @@ export default function TTS() {
             className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] p-3 text-sm leading-relaxed focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
             placeholder="在这里输入要朗读的文本..."
           />
+
+          {/* AI 改写工具条 */}
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] px-3 py-2">
+            <Sparkles size={14} className="text-[var(--color-accent)]" />
+            <span className="text-xs text-[var(--color-fg-muted)]">
+              v2.5-pro 改写
+            </span>
+            <input
+              value={refineStyle}
+              onChange={(e) => setRefineStyle(e.target.value)}
+              placeholder="风格(选填):纪录片旁白 / 活泼播报 / 古典朗诵 …"
+              className="flex-1 min-w-[160px] rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-1 text-xs"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={aiRefine}
+              disabled={refining || loading || !text.trim()}
+            >
+              {refining ? (
+                <Loader2 className="animate-spin" size={14} />
+              ) : (
+                <Sparkles size={14} />
+              )}
+              {refining ? "改写中…" : "AI 改写"}
+            </Button>
+            {textBeforeRefine !== null && (
+              <Button variant="ghost" size="sm" onClick={undoRefine}>
+                <RotateCcw size={14} /> 撤销
+              </Button>
+            )}
+          </div>
+          {refineNotice && (
+            <div className="mt-2 text-xs text-emerald-400">{refineNotice}</div>
+          )}
+
           <div className="mt-3 flex items-center justify-between">
             <div className="text-xs text-[var(--color-fg-muted)]">
               {mode === "batch"
                 ? "提示:按句号 / 问号 / 感叹号 / 换行切段,顺序合成"
                 : "提示:单段模式适合短文本(≤ 200 字),长文请切到批量"}
             </div>
-            <Button onClick={mode === "single" ? runSingle : runBatch} disabled={loading || !text.trim()}>
-              {loading ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
+            <Button
+              onClick={mode === "single" ? runSingle : runBatch}
+              disabled={loading || refining || !text.trim()}
+            >
+              {loading ? (
+                <Loader2 className="animate-spin" size={16} />
+              ) : (
+                <Play size={16} />
+              )}
               {loading ? "合成中" : "合成"}
             </Button>
           </div>
@@ -256,7 +357,9 @@ export default function TTS() {
           </CardHeader>
           <div className="space-y-3">
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-fg-muted)]">音色</label>
+              <label className="mb-1 block text-xs text-[var(--color-fg-muted)]">
+                音色
+              </label>
               <select
                 value={voice}
                 onChange={(e) => setVoice(e.target.value)}
@@ -293,7 +396,9 @@ export default function TTS() {
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-[var(--color-fg-muted)]">音频格式</label>
+              <label className="mb-1 block text-xs text-[var(--color-fg-muted)]">
+                音频格式
+              </label>
               <select
                 value={format}
                 onChange={(e) => setFormat(e.target.value as AudioFormat)}
@@ -326,8 +431,11 @@ export default function TTS() {
             )}
 
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] p-2 text-xs text-[var(--color-fg-muted)]">
-              <div className="mb-1 font-medium text-[var(--color-fg)]">说明</div>
-              speed / style 字段在 Phase 0 实测无效,UI 暂不暴露。详见 docs/api-research.md。
+              <div className="mb-1 font-medium text-[var(--color-fg)]">
+                说明
+              </div>
+              speed / style 字段在 Phase 0 实测无效,UI 暂不暴露。详见
+              docs/api-research.md。
             </div>
           </div>
         </Card>
@@ -336,7 +444,9 @@ export default function TTS() {
       {/* 错误 */}
       {error && (
         <Card>
-          <pre className="overflow-auto rounded-md bg-red-500/10 p-3 text-sm text-red-300">{error}</pre>
+          <pre className="overflow-auto rounded-md bg-red-500/10 p-3 text-sm text-red-300">
+            {error}
+          </pre>
         </Card>
       )}
 
@@ -347,7 +457,8 @@ export default function TTS() {
             <div>
               <CardTitle>合成结果</CardTitle>
               <CardDesc>
-                {SOURCE_LABEL[single.source]} · {single.voice} · {single.model} · {fmtBytes(single.bytes)}
+                {SOURCE_LABEL[single.source]} · {single.voice} · {single.model}{" "}
+                · {fmtBytes(single.bytes)}
               </CardDesc>
             </div>
             <a
@@ -358,7 +469,12 @@ export default function TTS() {
               <Download size={14} /> 下载
             </a>
           </CardHeader>
-          <audio ref={audioRef} controls src={single.audio_url} className="w-full" />
+          <audio
+            ref={audioRef}
+            controls
+            src={single.audio_url}
+            className="w-full"
+          />
         </Card>
       )}
 
@@ -372,7 +488,12 @@ export default function TTS() {
                 {batch.items.length} / {batch.total} 段已就绪
               </CardDesc>
             </div>
-            {loading && <Loader2 className="animate-spin text-[var(--color-fg-muted)]" size={16} />}
+            {loading && (
+              <Loader2
+                className="animate-spin text-[var(--color-fg-muted)]"
+                size={16}
+              />
+            )}
           </CardHeader>
           <div className="space-y-2">
             {batch.items.map((seg) => (
@@ -381,8 +502,14 @@ export default function TTS() {
                 className="rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] p-3"
               >
                 <div className="mb-2 flex items-center justify-between text-xs text-[var(--color-fg-muted)]">
-                  <span>段 {seg.index + 1}/{seg.total} · {fmtBytes(seg.bytes)}</span>
-                  <a href={seg.audio_url} download className="hover:text-[var(--color-fg)]">
+                  <span>
+                    段 {seg.index + 1}/{seg.total} · {fmtBytes(seg.bytes)}
+                  </span>
+                  <a
+                    href={seg.audio_url}
+                    download
+                    className="hover:text-[var(--color-fg)]"
+                  >
                     <Download size={14} />
                   </a>
                 </div>
@@ -429,7 +556,13 @@ export default function TTS() {
   );
 }
 
-function HistoryRow({ item, fmtBytes }: { item: HistoryItem; fmtBytes: (n: number) => string }) {
+function HistoryRow({
+  item,
+  fmtBytes,
+}: {
+  item: HistoryItem;
+  fmtBytes: (n: number) => string;
+}) {
   const [open, setOpen] = useState(false);
   const segCount = item.segments.length;
   return (
@@ -443,9 +576,15 @@ function HistoryRow({ item, fmtBytes }: { item: HistoryItem; fmtBytes: (n: numbe
         )}
       >
         <div className="flex items-center gap-2">
-          <Badge variant="muted">{item.mode === "single" ? "单段" : `批量 ${segCount} 段`}</Badge>
-          <Badge>{SOURCE_LABEL[item.source]} · {item.voice}</Badge>
-          <span className="text-[var(--color-fg-muted)]">{truncate(item.text, 40)}</span>
+          <Badge variant="muted">
+            {item.mode === "single" ? "单段" : `批量 ${segCount} 段`}
+          </Badge>
+          <Badge>
+            {SOURCE_LABEL[item.source]} · {item.voice}
+          </Badge>
+          <span className="text-[var(--color-fg-muted)]">
+            {truncate(item.text, 40)}
+          </span>
         </div>
         <div className="text-xs text-[var(--color-fg-muted)]">
           {formatDateTime(item.ts)} · {fmtBytes(item.total_bytes)}
@@ -454,7 +593,10 @@ function HistoryRow({ item, fmtBytes }: { item: HistoryItem; fmtBytes: (n: numbe
       {open && (
         <div className="space-y-2 border-t border-[var(--color-border)] p-3">
           {item.segments.map((s, i) => (
-            <div key={i} className="rounded border border-[var(--color-border)] p-2">
+            <div
+              key={i}
+              className="rounded border border-[var(--color-border)] p-2"
+            >
               <div className="mb-1 text-xs text-[var(--color-fg-muted)]">
                 段 {i + 1} · {fmtBytes(s.bytes)}
               </div>
