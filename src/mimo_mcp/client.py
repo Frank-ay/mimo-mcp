@@ -62,6 +62,10 @@ class MimoClient:
             payload = resp.json()
             err = payload.get("error", {}) if isinstance(payload, dict) else {}
             msg = err.get("message") or resp.text
+            param = err.get("param")
+            if param:
+                # MiMo 把"具体哪个字段错"放在 param 里,合并入 message 方便定位
+                msg = f"{msg} — {param}"
             code = err.get("code")
         except Exception:
             msg = resp.text

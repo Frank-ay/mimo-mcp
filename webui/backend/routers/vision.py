@@ -14,6 +14,7 @@ from fastapi import APIRouter, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from mimo_mcp.api import vision
+from mimo_mcp.client import MimoAPIError
 from mimo_mcp.config import get_settings
 from mimo_mcp.models import ImageInput
 
@@ -42,6 +43,19 @@ async def image(
     return await vision.image_understand([img], prompt, model=model)
 
 
+async def _video_understand_safely(video: str, prompt: str, model: str | None) -> dict:
+    """统一错误转换:把 SDK 抛的 ValueError / MimoAPIError 转成清晰的 4xx。"""
+    try:
+        return await vision.video_understand(video, prompt, model=model)
+    except ValueError as e:
+        # 视频过大、本地文件不存在等用户输入问题
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except MimoAPIError as e:
+        # MiMo 服务端 4xx(过大、参数错、限速等),把它的 message 透传
+        status = e.status if 400 <= e.status < 500 else 502
+        raise HTTPException(status_code=status, detail=str(e)) from e
+
+
 @router.post("/video")
 async def video(
     prompt: str = Form(...),
@@ -53,10 +67,10 @@ async def video(
     if file is not None and getattr(file, "filename", None):
         target = _save_upload(file, "vid")
         target.write_bytes(await file.read())
-        return await vision.video_understand(str(target), prompt, model=model)
+        return await _video_understand_safely(str(target), prompt, model)
 
     if video_url:
-        return await vision.video_understand(video_url, prompt, model=model)
+        return await _video_understand_safely(video_url, prompt, model)
 
     raise HTTPException(
         status_code=400,
@@ -73,4 +87,4 @@ class VideoUrlBody(BaseModel):
 @router.post("/video/url")
 async def video_via_json(body: VideoUrlBody) -> dict:
     """JSON 路径:让脚本/curl 调用更顺手。"""
-    return await vision.video_understand(body.video_url, body.prompt, model=body.model)
+    return await _video_understand_safely(body.video_url, body.prompt, body.model)

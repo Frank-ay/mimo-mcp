@@ -17,6 +17,7 @@ import asyncio
 import base64
 import logging
 import mimetypes
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,8 +46,15 @@ _PAGE_HOSTS: tuple[str, ...] = (
     "v.qq.com",
 )
 
-# DataURL 规模上限(50 MB 原始字节,base64 后 ~67 MB)
-_MAX_VIDEO_BYTES = 50 * 1024 * 1024
+# MiMo 实测限制:base64 后视频内容 ≤ 50 MB(2026-04-30 实测错误信息确认)
+# base64 编码膨胀 ~1.34x,所以原始字节 ≤ 37 MB 才安全。留点 buffer 设 35 MB。
+_MAX_VIDEO_BYTES = 35 * 1024 * 1024
+
+# 自动压缩参数:超过原始字节 ≤ 35MB 时尝试 ffmpeg 降采样
+_AUTO_COMPRESS_TRIGGER = _MAX_VIDEO_BYTES  # 同上限,方便理解
+_COMPRESS_MAX_DURATION = 90  # 秒,超过会被截短
+_COMPRESS_MAX_DIM = 720  # 长边 ≤ 720,降低分辨率
+_COMPRESS_CRF = 28  # 质量,数字越大文件越小(28 是中等质量)
 
 
 def _image_to_url_field(img: ImageInput) -> dict[str, Any]:
@@ -88,16 +96,75 @@ async def image_understand(
 # ---------------------------------------------------------------------------
 
 
-def _path_to_data_url(path: Path) -> str:
-    """本地文件 → data:video/mp4;base64,... 形式的 DataURL。"""
+async def _ffmpeg_compress(src: Path) -> Path:
+    """超大视频自动压缩:截短到 90 秒 + 长边 720p + CRF 28。"""
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError(
+            "视频过大且 ffmpeg 未安装,无法自动压缩。"
+            "请用 `brew install ffmpeg` 安装后重试,或手动截短视频"
+        )
+    out = src.with_name(f"{src.stem}_compressed.mp4")
+    log.info("视频过大(%.1f MB),启动 ffmpeg 自动压缩 → %s",
+             src.stat().st_size / 1024 / 1024, out.name)
+
+    # libx264 要求 width/height 都是偶数,加 force_divisible_by=2 强制
+    scale = (
+        f"scale='min({_COMPRESS_MAX_DIM},iw)':'min({_COMPRESS_MAX_DIM},ih)':"
+        "force_original_aspect_ratio=decrease:force_divisible_by=2"
+    )
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(src),
+        "-t", str(_COMPRESS_MAX_DURATION),
+        "-vf", scale,
+        "-c:v", "libx264", "-crf", str(_COMPRESS_CRF), "-preset", "veryfast",
+        "-c:a", "aac", "-b:a", "64k",
+        "-movflags", "+faststart",
+        str(out),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        err_txt = stderr.decode("utf-8", errors="replace")[:300]
+        raise RuntimeError(f"ffmpeg 压缩失败:{err_txt}")
+    new_size = out.stat().st_size
+    log.info("压缩完成:%.1f MB → %.1f MB",
+             src.stat().st_size / 1024 / 1024, new_size / 1024 / 1024)
+    return out
+
+
+async def _path_to_data_url(path: Path) -> str:
+    """本地文件 → data:video/mp4;base64,... 形式的 DataURL。
+
+    超过 _MAX_VIDEO_BYTES 时自动用 ffmpeg 压缩到 90 秒 / 720p / CRF 28。
+    """
     if not path.is_file():
         raise FileNotFoundError(f"本地视频不存在:{path}")
     size = path.stat().st_size
-    if size > _MAX_VIDEO_BYTES:
-        raise ValueError(
-            f"视频过大({size / 1024 / 1024:.1f} MB),超出 {_MAX_VIDEO_BYTES // 1024 // 1024} MB 上限。"
-            "请截短或降采样后再传。"
-        )
+
+    if size > _AUTO_COMPRESS_TRIGGER:
+        try:
+            path = await _ffmpeg_compress(path)
+            size = path.stat().st_size
+        except Exception as e:
+            max_mb = _MAX_VIDEO_BYTES // 1024 // 1024
+            raise ValueError(
+                f"视频过大({size / 1024 / 1024:.1f} MB),且自动压缩失败:{e}\n"
+                f"请手动截短到 ≤ {max_mb} MB 后重试,例如:\n"
+                f"  ffmpeg -i input.mp4 -t 60 -vf scale=720:-2 -c:v libx264 -crf 28 output.mp4"
+            ) from e
+
+        if size > _MAX_VIDEO_BYTES:
+            max_mb = _MAX_VIDEO_BYTES // 1024 // 1024
+            raise ValueError(
+                f"压缩后仍超 {max_mb} MB({size / 1024 / 1024:.1f} MB)。"
+                "请手动用更激进参数截短视频,例如把时长再缩到 30 秒。"
+            )
+
     mime = mimetypes.guess_type(path.name)[0] or "video/mp4"
     b64 = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime};base64,{b64}"
@@ -207,11 +274,11 @@ async def resolve_video_input(video: str) -> str:
             local = await _yt_dlp_download(video)
         else:
             local = await _download_direct(video)
-        return _path_to_data_url(local)
+        return await _path_to_data_url(local)
 
     # 4) 本地路径
     path = Path(video).expanduser().resolve()
-    return _path_to_data_url(path)
+    return await _path_to_data_url(path)
 
 
 async def video_understand(
