@@ -189,9 +189,20 @@ async def _yt_dlp_download(url: str) -> Path:
     stem = f"yt_{uuid.uuid4().hex[:10]}"
     out_template = str(out_dir / f"{stem}.%(ext)s")
 
-    # 优先选体积适中的 mp4,避免 4K 几百 MB 一下吃满 DataURL 上限
+    # B 站等站点常用 dash 分轨道流(video+audio 分开),要让 yt-dlp 自动 merge 成 mp4。
+    # format selector 从严到松多重 fallback,保证总能拿到东西:
+    #   1) ≤40MB 预合并 mp4
+    #   2) ≤40MB 任意预合并
+    #   3) bestvideo+bestaudio 分流(filesize 限制单流)
+    #   4) 不限大小的 best/bestvideo+bestaudio,后续 ffmpeg 压缩流程兜底
     ydl_opts = {
-        "format": "best[ext=mp4][filesize<40M]/best[filesize<40M]/best",
+        "format": (
+            "best[ext=mp4][filesize<40M]/"
+            "best[filesize<40M]/"
+            "bestvideo[ext=mp4][filesize<25M]+bestaudio[ext=m4a]/"
+            "bestvideo[filesize<25M]+bestaudio/"
+            "best/bestvideo+bestaudio"
+        ),
         "outtmpl": out_template,
         "quiet": True,
         "no_warnings": True,

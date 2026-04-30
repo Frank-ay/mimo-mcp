@@ -44,16 +44,21 @@ async def image(
 
 
 async def _video_understand_safely(video: str, prompt: str, model: str | None) -> dict:
-    """统一错误转换:把 SDK 抛的 ValueError / MimoAPIError 转成清晰的 4xx。"""
+    """统一错误转换:SDK 各类异常都转成清晰的 4xx + 中文 detail,避免 500 让用户瞎猜。"""
     try:
         return await vision.video_understand(video, prompt, model=model)
     except ValueError as e:
         # 视频过大、本地文件不存在等用户输入问题
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=f"视频文件不存在:{e}") from e
     except MimoAPIError as e:
         # MiMo 服务端 4xx(过大、参数错、限速等),把它的 message 透传
         status = e.status if 400 <= e.status < 500 else 502
         raise HTTPException(status_code=status, detail=str(e)) from e
+    except RuntimeError as e:
+        # yt-dlp 下载失败 / ffmpeg 压缩失败 / 其他外部工具问题
+        raise HTTPException(status_code=502, detail=str(e)) from e
 
 
 @router.post("/video")
