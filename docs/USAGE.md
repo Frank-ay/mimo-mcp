@@ -12,7 +12,7 @@
 按顺序勾掉,任何一项失败都不要往下走:
 
 ```bash
-cd /Users/liuaiyi/Desktop/xiaomi-MIMO
+cd /Users/Frank-ay/Desktop/xiaomi-MIMO
 
 # 1) Python 依赖装好
 uv sync
@@ -55,7 +55,7 @@ import json, pathlib
 p = pathlib.Path.home() / '.claude' / 'settings.local.json'
 d = json.loads(p.read_text())
 d.setdefault('mcpServers', {})['mimo-mcp'] = {
-    'command': '/Users/liuaiyi/Desktop/xiaomi-MIMO/scripts/run_mcp.sh'
+    'command': '/Users/Frank-ay/Desktop/xiaomi-MIMO/scripts/run_mcp.sh'
 }
 p.write_text(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
 "
@@ -64,7 +64,7 @@ p.write_text(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
 cat >> ~/.codex/config.toml <<'EOF'
 
 [mcp_servers.mimo-mcp]
-command = "/Users/liuaiyi/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
+command = "/Users/Frank-ay/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
 EOF
 ```
 

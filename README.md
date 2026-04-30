@@ -82,20 +82,20 @@ data/                # 运行期数据(已 .gitignore)
 {
   "mcpServers": {
     "mimo-mcp": {
-      "command": "/Users/liuaiyi/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
+      "command": "/Users/Frank-ay/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
     }
   }
 }
 ```
 
-> 也可以直接用 `uv run --directory /Users/liuaiyi/Desktop/xiaomi-MIMO mimo-mcp` 当 command,
+> 也可以直接用 `uv run --directory /Users/Frank-ay/Desktop/xiaomi-MIMO mimo-mcp` 当 command,
 > 然后在 `env` 里传 `MIMO_API_KEY`。脚本方式更省心,因为它自动加载 `.env`。
 
 ### 3.2 Codex(`~/.codex/config.toml`)
 
 ```toml
 [mcp_servers.mimo-mcp]
-command = "/Users/liuaiyi/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
+command = "/Users/Frank-ay/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
 ```
 
 ### 3.3 验证

@@ -73,7 +73,7 @@
 ### 6.1 总体结构(模块边界)
 
 ```
-/Users/liuaiyi/Desktop/xiaomi-MIMO/
+/Users/Frank-ay/Desktop/xiaomi-MIMO/
 ├── pyproject.toml             # uv 管理,Python 3.11+
 ├── README.md                  # 一页快速上手
 ├── .env.example               # MIMO_API_KEY、MIMO_BASE_URL、PORT 等
@@ -130,8 +130,8 @@
 
 | 资产 | 路径 | 复用方式 |
 |---|---|---|
-| Python MCP 服务器骨架 | `/Users/liuaiyi/Downloads/mcp/alibabacloud-adb-mysql-mcp-server/src/adb_mysql_mcp_server/server.py` | 直接拷 Tool/Resource/Error 注册模式,把 `pymysql` 换成 `httpx` |
-| FastMCP 简化范式 | `/Users/liuaiyi/Downloads/mcp/blender-mcp/src/blender_mcp/server.py` | 用 `@mcp.tool()` 装饰器替代 `Server` 类,样板更少 |
+| Python MCP 服务器骨架 | `/Users/Frank-ay/Downloads/mcp/alibabacloud-adb-mysql-mcp-server/src/adb_mysql_mcp_server/server.py` | 直接拷 Tool/Resource/Error 注册模式,把 `pymysql` 换成 `httpx` |
+| FastMCP 简化范式 | `/Users/Frank-ay/Downloads/mcp/blender-mcp/src/blender_mcp/server.py` | 用 `@mcp.tool()` 装饰器替代 `Server` 类,样板更少 |
 | Stdio 注册写法 | `~/.claude/settings.local.json`(L30-46) + `~/.codex/config.toml`(L41-47) | 抄成 `mimo-mcp` 段落,改 command/env |
 | 异步任务轮询模式 | `~/.agents/skills/libtv-skill/scripts/` | 视频理解/克隆审核走"提交→轮询"时复用此模式 |
 | MCP 高质量构建指南 | `~/.claude/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/SKILL.md` | 按其检查清单做 schema/error/instructions/progress |
@@ -199,7 +199,7 @@ MIMO_DATA_DIR=./data
 "mcpServers": {
   "mimo-mcp": {
     "command": "uv",
-    "args": ["--directory", "/Users/liuaiyi/Desktop/xiaomi-MIMO", "run", "mimo-mcp"],
+    "args": ["--directory", "/Users/Frank-ay/Desktop/xiaomi-MIMO", "run", "mimo-mcp"],
     "env": { "MIMO_API_KEY": "sk-xxx" }
   }
 }
@@ -209,7 +209,7 @@ MIMO_DATA_DIR=./data
 
 ```toml
 [mcp_servers.mimo-mcp]
-command = "/Users/liuaiyi/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
+command = "/Users/Frank-ay/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
 ```
 
 > Codex 的 TOML 不便传递复杂 env,统一通过 `run_mcp.sh` 加载 `.env` 后再启动 `uv run mimo-mcp`。
