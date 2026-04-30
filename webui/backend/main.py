@@ -86,12 +86,48 @@ app = create_app()
 
 
 def main() -> None:
+    """启动 Web 后端。
+
+    默认开启 hot reload:
+    - 改 src/mimo_mcp/**.py 或 webui/backend/**.py → 自动重启
+    - 改 .env(API key、base_url 等)→ 自动重启,新配置立即生效
+    - 改 webui/frontend(归 Vite HMR 管,不在这里)
+    """
     settings = get_settings()
+
+    if not settings.web_reload:
+        uvicorn.run(
+            "webui.backend.main:app",
+            host=settings.web_host,
+            port=settings.web_port,
+            reload=False,
+        )
+        return
+
+    # 监听三个范围:src/ 与 webui/backend/ 里的 .py,以及项目根的 .env
+    # 前端 TS / 产物 / 缓存都用 reload_excludes 排除掉
+    project_root = Path(__file__).resolve().parents[2]
     uvicorn.run(
         "webui.backend.main:app",
         host=settings.web_host,
         port=settings.web_port,
-        reload=False,
+        reload=True,
+        reload_dirs=[
+            str(project_root / "src"),
+            str(project_root / "webui" / "backend"),
+            str(project_root),  # 为了监听根目录下的 .env
+        ],
+        reload_includes=["*.py", ".env"],
+        reload_excludes=[
+            "**/__pycache__/*",
+            "**/.pytest_cache/*",
+            "**/node_modules/*",
+            ".venv/*",
+            "data/*",
+            "webui/frontend/*",
+            ".git/*",
+            "docs/*",
+        ],
     )
 
 

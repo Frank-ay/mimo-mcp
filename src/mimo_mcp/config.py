@@ -33,6 +33,9 @@ class MimoSettings(BaseSettings):
 
     web_host: str = "127.0.0.1"
     web_port: int = 7801
+    # 开发期默认开启 reload:改 .py 或 .env 自动重启,避免改完看不到效果
+    # 生产部署建议设 false(更稳定 + 启动更快)
+    web_reload: bool = True
 
     data_dir: Path = Field(default=Path("./data"))
     http_timeout: float = 120.0
