@@ -3,6 +3,14 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-stdio-orange.svg)](https://modelcontextprotocol.io/)
+[![Release](https://img.shields.io/github/v/release/Frank-ay/mimo-mcp?label=release)](https://github.com/Frank-ay/mimo-mcp/releases/latest)
+
+> 🎬 **项目演示视频**(108 秒)
+
+<video src="https://github.com/Frank-ay/mimo-mcp/releases/download/v0.1.1/mimo-mcp-intro.mp4" controls width="100%" muted></video>
+
+> 浏览器若不渲染上方播放器,点这里直接播放或下载:
+> [mimo-mcp-intro.mp4](https://github.com/Frank-ay/mimo-mcp/releases/download/v0.1.1/mimo-mcp-intro.mp4)
 
 把小米 [MiMo](https://platform.xiaomimimo.com/) 的全模态能力——多模态对话 / 图像 / 视频理解 / TTS / 声音克隆 / 声音设计 / ASR——封装为一个 **stdio MCP Server**,让 [Claude Code](https://docs.claude.com/en/docs/claude-code) 与 [Codex](https://github.com/openai/codex) 等编程工具直接当 tool 调用,并附带一个**本地 Web 管理面板**(8 个页面:概览 / 沙盒 / 文字转语音 / 图像视频 / 音色库 / 克隆 / 设计 / 审计)。
 
