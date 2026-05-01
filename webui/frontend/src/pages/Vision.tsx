@@ -1,5 +1,13 @@
 import { useRef, useState } from "react";
-import { FileVideo, Link2, Loader2, Scissors, Upload } from "lucide-react";
+import {
+  Check,
+  Copy,
+  FileVideo,
+  Link2,
+  Loader2,
+  Scissors,
+  Upload,
+} from "lucide-react";
 import {
   api,
   type ChunkedPlanEvent,
@@ -32,6 +40,58 @@ function fmtTime(sec: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** 一键复制到剪贴板,带「已复制 ✓」短暂回显。 */
+function CopyButton({
+  text,
+  label = "复制",
+}: {
+  text: string;
+  label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function handle() {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // 兼容老浏览器:用临时 textarea + execCommand
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } finally {
+        document.body.removeChild(ta);
+      }
+    }
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={handle}
+      disabled={!text}
+      title={copied ? "已复制到剪贴板" : "复制全部文本到剪贴板"}
+    >
+      {copied ? (
+        <Check size={14} className="text-emerald-400" />
+      ) : (
+        <Copy size={14} />
+      )}
+      {copied ? "已复制" : label}
+    </Button>
+  );
+}
+
 export default function Vision() {
   const [mode, setMode] = useState<Mode>("image");
   const [videoSource, setVideoSource] = useState<VideoSource>("file");
@@ -56,8 +116,10 @@ export default function Vision() {
     try {
       // 长视频分段模式 — 仅视频且勾选时启用
       if (mode === "video" && chunkedMode) {
-        if (videoSource === "file" && !videoFile) throw new Error("请先选择视频文件");
-        if (videoSource === "url" && !videoUrl.trim()) throw new Error("请输入视频 URL");
+        if (videoSource === "file" && !videoFile)
+          throw new Error("请先选择视频文件");
+        if (videoSource === "url" && !videoUrl.trim())
+          throw new Error("请输入视频 URL");
 
         const form = new FormData();
         form.append("prompt", prompt);
@@ -65,7 +127,12 @@ export default function Vision() {
         if (videoSource === "file" && videoFile) form.append("file", videoFile);
         if (videoSource === "url") form.append("video_url", videoUrl.trim());
 
-        const state: ChunkedState = { total: 0, duration: 0, segments: [], summary: "" };
+        const state: ChunkedState = {
+          total: 0,
+          duration: 0,
+          segments: [],
+          summary: "",
+        };
         setChunked({ ...state });
         abortRef.current?.abort();
         abortRef.current = new AbortController();
@@ -114,7 +181,9 @@ export default function Vision() {
           prompt,
         })) as never;
       }
-      setOutput(resp.choices?.[0]?.message?.content ?? JSON.stringify(resp, null, 2));
+      setOutput(
+        resp.choices?.[0]?.message?.content ?? JSON.stringify(resp, null, 2),
+      );
     } catch (e) {
       setError(String(e));
     } finally {
@@ -127,7 +196,9 @@ export default function Vision() {
       <div>
         <h1 className="text-2xl font-bold">图像 / 视频理解</h1>
         <p className="text-sm text-[var(--color-fg-muted)]">
-          基于 mimo-v2.5 全模态。视频支持本地上传 + B 站/YouTube/抖音 等视频站(yt-dlp 自动下载)。**长视频分段模式**可突破 MiMo 单次 50 MB 上限。
+          基于 mimo-v2.5 全模态。视频支持本地上传 + B 站/YouTube/抖音
+          等视频站(yt-dlp 自动下载)。**长视频分段模式**可突破 MiMo 单次 50 MB
+          上限。
         </p>
       </div>
 
@@ -138,10 +209,18 @@ export default function Vision() {
             <CardDesc>切换图片 / 视频模式</CardDesc>
           </div>
           <div className="flex gap-2">
-            <Button variant={mode === "image" ? "default" : "outline"} size="sm" onClick={() => setMode("image")}>
+            <Button
+              variant={mode === "image" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setMode("image")}
+            >
               图片
             </Button>
-            <Button variant={mode === "video" ? "default" : "outline"} size="sm" onClick={() => setMode("video")}>
+            <Button
+              variant={mode === "video" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setMode("video")}
+            >
               视频
             </Button>
           </div>
@@ -150,7 +229,9 @@ export default function Vision() {
         {mode === "image" ? (
           <label className="mb-3 flex cursor-pointer items-center gap-3 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-panel-2)] px-4 py-6 text-sm">
             <Upload size={18} />
-            <span>{imageFile ? imageFile.name : "点击选择图片(jpg / png / webp)"}</span>
+            <span>
+              {imageFile ? imageFile.name : "点击选择图片(jpg / png / webp)"}
+            </span>
             <input
               type="file"
               accept="image/*"
@@ -227,13 +308,18 @@ export default function Vision() {
                 />
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
-                    <Scissors size={14} className="text-[var(--color-accent)]" />
+                    <Scissors
+                      size={14}
+                      className="text-[var(--color-accent)]"
+                    />
                     <span className="text-sm font-medium">
                       长视频分段分析(突破 50 MB 上限)
                     </span>
                   </div>
                   <div className="mt-1 text-xs text-[var(--color-fg-muted)]">
-                    视频会被切成 N 段(每段约 {segmentSeconds} 秒),逐段独立分析后由 v2.5-pro 综合成完整内容。**适合 1 分钟以上 / 体积大的视频**;短视频不必勾(多耗 token)。
+                    视频会被切成 N 段(每段约 {segmentSeconds}{" "}
+                    秒),逐段独立分析后由 v2.5-pro 综合成完整内容。**适合 1
+                    分钟以上 / 体积大的视频**;短视频不必勾(多耗 token)。
                   </div>
                   {chunkedMode && (
                     <div className="mt-2 flex items-center gap-2">
@@ -246,7 +332,9 @@ export default function Vision() {
                         max={90}
                         step={5}
                         value={segmentSeconds}
-                        onChange={(e) => setSegmentSeconds(Number(e.target.value))}
+                        onChange={(e) =>
+                          setSegmentSeconds(Number(e.target.value))
+                        }
                         className="flex-1 accent-[var(--color-accent)]"
                       />
                       <span className="text-xs font-mono text-[var(--color-fg)]">
@@ -292,7 +380,8 @@ export default function Vision() {
       {output && (
         <Card>
           <CardHeader>
-            <CardTitle>结果</CardTitle>
+            <CardTitle>分析结果</CardTitle>
+            <CopyButton text={output} />
           </CardHeader>
           <pre className="whitespace-pre-wrap text-sm">{output}</pre>
         </Card>
@@ -311,15 +400,33 @@ export default function Vision() {
                     : "正在切段…"}
                 </CardDesc>
               </div>
-              {loading && chunked.segments.length < chunked.total && (
-                <Loader2 className="animate-spin text-[var(--color-fg-muted)]" size={16} />
-              )}
+              <div className="flex items-center gap-2">
+                {chunked.segments.length > 0 && (
+                  <CopyButton
+                    text={chunked.segments
+                      .map(
+                        (seg) =>
+                          `[${fmtTime(seg.start)}-${fmtTime(seg.end)}] 段 ${seg.index + 1}\n${seg.description}`,
+                      )
+                      .join("\n\n")}
+                    label="复制全部段"
+                  />
+                )}
+                {loading && chunked.segments.length < chunked.total && (
+                  <Loader2
+                    className="animate-spin text-[var(--color-fg-muted)]"
+                    size={16}
+                  />
+                )}
+              </div>
             </CardHeader>
             {chunked.total > 0 && (
               <div className="mb-3 h-2 overflow-hidden rounded bg-[var(--color-panel-2)]">
                 <div
                   className="h-full bg-[var(--color-accent)] transition-all"
-                  style={{ width: `${(chunked.segments.length / chunked.total) * 100}%` }}
+                  style={{
+                    width: `${(chunked.segments.length / chunked.total) * 100}%`,
+                  }}
                 />
               </div>
             )}
@@ -332,10 +439,13 @@ export default function Vision() {
                   <summary className="flex cursor-pointer items-center gap-2 text-sm">
                     <Badge>段 {seg.index + 1}</Badge>
                     <span className="text-[var(--color-fg-muted)]">
-                      {fmtTime(seg.start)} - {fmtTime(seg.end)} · {(seg.bytes / 1024 / 1024).toFixed(2)} MB
+                      {fmtTime(seg.start)} - {fmtTime(seg.end)} ·{" "}
+                      {(seg.bytes / 1024 / 1024).toFixed(2)} MB
                     </span>
                   </summary>
-                  <pre className="mt-2 whitespace-pre-wrap text-sm">{seg.description}</pre>
+                  <pre className="mt-2 whitespace-pre-wrap text-sm">
+                    {seg.description}
+                  </pre>
                 </details>
               ))}
             </div>
@@ -346,10 +456,15 @@ export default function Vision() {
               <CardHeader>
                 <div>
                   <CardTitle>综合分析</CardTitle>
-                  <CardDesc>v2.5-pro 把 {chunked.total} 段描述融合成连贯叙事</CardDesc>
+                  <CardDesc>
+                    v2.5-pro 把 {chunked.total} 段描述融合成连贯叙事
+                  </CardDesc>
                 </div>
+                <CopyButton text={chunked.summary} />
               </CardHeader>
-              <pre className="whitespace-pre-wrap text-sm leading-relaxed">{chunked.summary}</pre>
+              <pre className="whitespace-pre-wrap text-sm leading-relaxed">
+                {chunked.summary}
+              </pre>
             </Card>
           )}
         </>
