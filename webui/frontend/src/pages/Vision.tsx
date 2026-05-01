@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
+  ChevronDown,
+  ChevronRight,
   Copy,
   FileVideo,
+  History,
   Link2,
   Loader2,
   Scissors,
+  Trash2,
   Upload,
 } from "lucide-react";
 import {
@@ -20,6 +24,50 @@ import { Card, CardDesc, CardHeader, CardTitle } from "@/components/ui/card";
 
 type Mode = "image" | "video";
 type VideoSource = "file" | "url";
+
+// ---- localStorage 历史 ----
+const HISTORY_KEY = "mimo:vision:history";
+const HISTORY_MAX = 30;
+
+interface VisionHistoryItem {
+  id: string;
+  ts: string; // ISO 时间
+  kind: "image" | "video" | "video_url" | "video_chunked" | "video_chunked_url";
+  inputLabel: string; // 文件名 / URL / 标题
+  prompt: string;
+  result?: string; // 单段:完整 content;分段:综合 summary
+  segments?: { start: number; end: number; description: string }[];
+  duration?: number;
+}
+
+function loadHistory(): VisionHistoryItem[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? (JSON.parse(raw) as VisionHistoryItem[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(items: VisionHistoryItem[]) {
+  try {
+    localStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify(items.slice(0, HISTORY_MAX)),
+    );
+  } catch {
+    // 满或被禁,吞
+  }
+}
+
+function fmtRelTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("zh-CN", { hour12: false });
+  } catch {
+    return iso;
+  }
+}
 
 const URL_HINTS = [
   "https://example.com/clip.mp4",
@@ -165,7 +213,36 @@ export default function Vision() {
   const [output, setOutput] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [chunked, setChunked] = useState<ChunkedState | null>(null);
+  const [history, setHistory] = useState<VisionHistoryItem[]>(() =>
+    loadHistory(),
+  );
   const abortRef = useRef<AbortController | null>(null);
+
+  // 历史变更落 localStorage
+  useEffect(() => {
+    saveHistory(history);
+  }, [history]);
+
+  function pushHistory(item: VisionHistoryItem) {
+    setHistory((prev) => [item, ...prev].slice(0, HISTORY_MAX));
+  }
+
+  function deleteHistory(id: string) {
+    setHistory((prev) => prev.filter((h) => h.id !== id));
+  }
+
+  function clearHistory() {
+    if (
+      history.length > 0 &&
+      !confirm(`确定清空全部 ${history.length} 条历史?`)
+    )
+      return;
+    setHistory([]);
+  }
+
+  function makeId(): string {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  }
 
   async function send() {
     setLoading(true);
@@ -212,6 +289,25 @@ export default function Vision() {
             onSummary: (e: ChunkedSummaryEvent) => {
               state.summary = e.text;
               setChunked({ ...state });
+              // 综合到达即视为成功完成,落历史
+              pushHistory({
+                id: makeId(),
+                ts: new Date().toISOString(),
+                kind:
+                  videoSource === "url" ? "video_chunked_url" : "video_chunked",
+                inputLabel:
+                  videoSource === "url"
+                    ? videoUrl.trim()
+                    : (videoFile?.name ?? "(未知文件)"),
+                prompt,
+                result: e.text,
+                segments: state.segments.map((s) => ({
+                  start: s.start,
+                  end: s.end,
+                  description: s.description,
+                })),
+                duration: state.duration,
+              });
             },
             onError: (msg) => setError(msg),
           },
@@ -241,9 +337,28 @@ export default function Vision() {
           prompt,
         })) as never;
       }
-      setOutput(
-        resp.choices?.[0]?.message?.content ?? JSON.stringify(resp, null, 2),
-      );
+      const text =
+        resp.choices?.[0]?.message?.content ?? JSON.stringify(resp, null, 2);
+      setOutput(text);
+      // 落历史
+      pushHistory({
+        id: makeId(),
+        ts: new Date().toISOString(),
+        kind:
+          mode === "image"
+            ? "image"
+            : videoSource === "url"
+              ? "video_url"
+              : "video",
+        inputLabel:
+          mode === "image"
+            ? (imageFile?.name ?? "(未知图片)")
+            : videoSource === "url"
+              ? videoUrl.trim()
+              : (videoFile?.name ?? "(未知视频)"),
+        prompt,
+        result: text,
+      });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -618,6 +733,161 @@ export default function Vision() {
             </Card>
           )}
         </>
+      )}
+
+      {/* 分析历史(localStorage 持久化) */}
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <History size={16} /> 分析历史
+            </CardTitle>
+            <CardDesc>
+              最多 {HISTORY_MAX} 条 · 浏览器关掉再开还在 · localStorage 持久化
+            </CardDesc>
+          </div>
+          {history.length > 0 && (
+            <Button variant="ghost" size="sm" onClick={clearHistory}>
+              <Trash2 size={14} /> 清空全部
+            </Button>
+          )}
+        </CardHeader>
+        {history.length === 0 ? (
+          <div className="py-6 text-center text-sm text-[var(--color-fg-muted)]">
+            还没有分析记录,做一次分析就会自动存档在这里。
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {history.map((h) => (
+              <HistoryRow
+                key={h.id}
+                item={h}
+                onDelete={() => deleteHistory(h.id)}
+              />
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+const HISTORY_KIND_LABEL: Record<VisionHistoryItem["kind"], string> = {
+  image: "图片",
+  video: "视频(单段)",
+  video_url: "视频 URL(单段)",
+  video_chunked: "视频(分段)",
+  video_chunked_url: "视频 URL(分段)",
+};
+
+function HistoryRow({
+  item,
+  onDelete,
+}: {
+  item: VisionHistoryItem;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const previewText = (item.result ?? "").trim().slice(0, 60);
+
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)]">
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex flex-1 items-start gap-2 text-left"
+        >
+          {open ? (
+            <ChevronDown
+              size={14}
+              className="mt-1 text-[var(--color-fg-muted)]"
+            />
+          ) : (
+            <ChevronRight
+              size={14}
+              className="mt-1 text-[var(--color-fg-muted)]"
+            />
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 text-xs">
+              <Badge variant="muted">{HISTORY_KIND_LABEL[item.kind]}</Badge>
+              <span className="text-[var(--color-fg-muted)]">
+                {fmtRelTime(item.ts)}
+              </span>
+              {item.duration !== undefined && item.duration > 0 && (
+                <span className="text-[var(--color-fg-muted)]">
+                  · 时长 {Math.floor(item.duration)}s
+                </span>
+              )}
+              {item.segments && item.segments.length > 0 && (
+                <span className="text-[var(--color-fg-muted)]">
+                  · {item.segments.length} 段
+                </span>
+              )}
+            </div>
+            <div className="mt-0.5 truncate text-xs text-[var(--color-fg-muted)]">
+              {item.inputLabel}
+            </div>
+            <div className="mt-0.5 truncate text-sm">
+              {previewText || "(无结果文本)"}
+              {(item.result?.length ?? 0) > 60 && "…"}
+            </div>
+          </div>
+        </button>
+        <div className="flex items-center gap-1">
+          {item.result && <CopyButton text={item.result} />}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onDelete}
+            title="删除这条历史"
+          >
+            <Trash2 size={14} className="text-red-400" />
+          </Button>
+        </div>
+      </div>
+      {open && (
+        <div className="space-y-2 border-t border-[var(--color-border)] p-3">
+          <div className="text-xs text-[var(--color-fg-muted)]">
+            提问:<span className="text-[var(--color-fg)]">{item.prompt}</span>
+          </div>
+          {item.result && (
+            <div>
+              <div className="mb-1 text-xs text-[var(--color-fg-muted)]">
+                {item.segments ? "综合分析" : "结果"}:
+              </div>
+              <pre className="whitespace-pre-wrap rounded border border-[var(--color-border)] bg-[var(--color-panel)] p-2 text-sm leading-relaxed">
+                {item.result}
+              </pre>
+            </div>
+          )}
+          {item.segments && item.segments.length > 0 && (
+            <div>
+              <div className="mb-1 text-xs text-[var(--color-fg-muted)]">
+                各段描述({item.segments.length} 段):
+              </div>
+              <div className="space-y-1.5">
+                {item.segments.map((seg, i) => (
+                  <details
+                    key={i}
+                    className="rounded border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
+                  >
+                    <summary className="cursor-pointer text-xs">
+                      <Badge>段 {i + 1}</Badge>{" "}
+                      <span className="text-[var(--color-fg-muted)]">
+                        {Math.floor(seg.start)}s – {Math.floor(seg.end)}s
+                      </span>
+                    </summary>
+                    <pre className="mt-2 whitespace-pre-wrap text-sm">
+                      {seg.description}
+                    </pre>
+                  </details>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
