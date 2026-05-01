@@ -176,3 +176,86 @@ async def video_chunked_via_json(body: ChunkedBody) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------------------------------------------------------------------------
+# 视频元信息探针(metadata-only,不下载视频本体)
+# ---------------------------------------------------------------------------
+
+
+class ProbeBody(BaseModel):
+    video_url: str
+
+
+@router.post("/video/probe")
+async def video_probe(body: ProbeBody) -> dict[str, Any]:
+    """探视频元信息(仅 metadata,不下载视频)。
+
+    前端在用户贴 URL 后调用此端点拿到时长 / 标题 / UP 主等信息,
+    据此提示是否需要切到「长视频分段分析」模式。
+    """
+    import asyncio
+
+    url = body.video_url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="video_url 必填")
+
+    if url.startswith("data:"):
+        return {"kind": "data_url", "duration": None, "title": None}
+
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="必须是 http(s) URL 或 data: URL")
+
+    if vision._is_page_host(url):
+        # B 站 / YouTube / 抖音 等:用 yt-dlp 仅拉 metadata
+        import yt_dlp
+
+        loop = asyncio.get_event_loop()
+
+        def _do_probe() -> dict[str, Any]:
+            opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "noprogress": True,
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                return info or {}
+
+        try:
+            info = await loop.run_in_executor(None, _do_probe)
+        except yt_dlp.utils.DownloadError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"无法读取该 URL 元信息(可能登录视频/反爬/失效):{e}",
+            ) from e
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"探针失败:{e}") from e
+
+        duration = info.get("duration")
+        return {
+            "kind": "page",
+            "duration": float(duration) if duration is not None else None,
+            "title": info.get("title"),
+            "uploader": info.get("uploader") or info.get("channel"),
+            "thumbnail": info.get("thumbnail"),
+            "extractor": info.get("extractor_key") or info.get("extractor"),
+        }
+
+    # 直链:HEAD 拿 content-length(无法可靠拿时长,只能给体积参考)
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+            resp = await c.head(url)
+        ct = resp.headers.get("content-type", "")
+        cl = resp.headers.get("content-length")
+        return {
+            "kind": "direct",
+            "duration": None,
+            "size": int(cl) if cl and cl.isdigit() else None,
+            "content_type": ct,
+        }
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=400, detail=f"无法访问 URL:{e}") from e

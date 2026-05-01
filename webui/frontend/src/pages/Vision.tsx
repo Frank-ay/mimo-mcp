@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Check,
   Copy,
@@ -115,9 +115,52 @@ export default function Vision() {
     };
   }
   const [videoUrl, setVideoUrl] = useState("");
+  const [urlProbing, setUrlProbing] = useState(false);
+  const [urlProbeError, setUrlProbeError] = useState<string>("");
+  const [urlMeta, setUrlMeta] = useState<{
+    duration: number | null;
+    title?: string | null;
+    uploader?: string | null;
+    thumbnail?: string | null;
+    extractor?: string | null;
+    size?: number | null;
+  } | null>(null);
   const [prompt, setPrompt] = useState("请详细描述这段内容。");
   const [chunkedMode, setChunkedMode] = useState(false);
   const [segmentSeconds, setSegmentSeconds] = useState(50);
+
+  // URL 输入 debounce 500ms 后,自动调 yt-dlp probe 拿元信息
+  useEffect(() => {
+    if (mode !== "video" || videoSource !== "url") return;
+    const url = videoUrl.trim();
+    setUrlMeta(null);
+    setUrlProbeError("");
+    if (!url) return;
+
+    const handle = setTimeout(async () => {
+      setUrlProbing(true);
+      try {
+        const meta = await api.videoProbe({ video_url: url });
+        setUrlMeta({
+          duration: meta.duration,
+          title: meta.title,
+          uploader: meta.uploader,
+          thumbnail: meta.thumbnail,
+          extractor: meta.extractor,
+          size: meta.size,
+        });
+        // 时长 > 90 秒,自动勾选分段(覆盖之前的状态,避免用户漏勾)
+        if (meta.duration !== null && meta.duration > 90) {
+          setChunkedMode(true);
+        }
+      } catch (e) {
+        setUrlProbeError(String(e));
+      } finally {
+        setUrlProbing(false);
+      }
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [videoUrl, videoSource, mode]);
   const [loading, setLoading] = useState(false);
   const [output, setOutput] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -332,6 +375,75 @@ export default function Vision() {
                     </button>
                   ))}
                 </div>
+                {/* URL probe 状态:加载/失败/已拿到元信息 */}
+                {urlProbing && (
+                  <div className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
+                    <Loader2 className="animate-spin" size={12} />
+                    正在读取视频元信息(yt-dlp metadata)…
+                  </div>
+                )}
+                {urlProbeError && !urlProbing && (
+                  <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                    读取元信息失败:{urlProbeError}
+                  </div>
+                )}
+                {urlMeta && !urlProbing && (
+                  <div
+                    className={
+                      urlMeta.duration !== null && urlMeta.duration > 90
+                        ? "rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300"
+                        : "rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] px-3 py-2 text-xs"
+                    }
+                  >
+                    <div className="flex items-start gap-3">
+                      {urlMeta.thumbnail && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={urlMeta.thumbnail}
+                          alt=""
+                          className="h-12 w-20 rounded object-cover"
+                        />
+                      )}
+                      <div className="flex-1 space-y-0.5">
+                        {urlMeta.title && (
+                          <div className="font-medium text-[var(--color-fg)]">
+                            📺 {urlMeta.title}
+                          </div>
+                        )}
+                        <div className="text-[var(--color-fg-muted)]">
+                          {urlMeta.duration !== null
+                            ? `时长 ${fmtTime(urlMeta.duration)}`
+                            : urlMeta.size
+                              ? `体积 ${(urlMeta.size / 1024 / 1024).toFixed(1)} MB · 时长未知(直链)`
+                              : "时长 / 体积未知"}
+                          {urlMeta.uploader && ` · ${urlMeta.uploader}`}
+                          {urlMeta.extractor && ` · ${urlMeta.extractor}`}
+                        </div>
+                        {urlMeta.duration !== null && urlMeta.duration > 90 && (
+                          <div className="font-medium">
+                            ✓ 已自动勾选「长视频分段分析」(超 90 秒单段无法处理)
+                          </div>
+                        )}
+                        {urlMeta.duration !== null &&
+                          urlMeta.duration <= 90 && (
+                            <div className="text-[var(--color-fg-muted)]">
+                              视频较短,默认走单段模式即可。
+                            </div>
+                          )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {videoUrl.trim() &&
+                  !urlMeta &&
+                  !urlProbing &&
+                  !urlProbeError &&
+                  !chunkedMode && (
+                    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                      💡 直链 / 未知站点 URL 时长无法预探测。如果是长视频(&gt;
+                      90 秒)请勾选下方「长视频分段分析」。
+                    </div>
+                  )}
               </div>
             )}
 

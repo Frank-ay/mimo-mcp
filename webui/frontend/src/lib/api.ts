@@ -182,6 +182,23 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // 视频元信息探针:用 yt-dlp metadata-only 拿时长/标题等,不下载本体
+  videoProbe: (body: { video_url: string }) =>
+    request<{
+      kind: "data_url" | "page" | "direct";
+      duration: number | null;
+      title?: string | null;
+      uploader?: string | null;
+      thumbnail?: string | null;
+      extractor?: string | null;
+      size?: number | null;
+      content_type?: string | null;
+    }>("/vision/video/probe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
   // 长视频分段分析:SSE 流式返回,绕开 50 MB 上限
   videoChunked: async (
     form: FormData,
