@@ -136,26 +136,39 @@ async def _probe_video_duration(path: Path) -> float:
 _COMPATIBLE_CODECS = {"h264", "avc1", "hevc", "h265"}
 
 
-async def _ffmpeg_compress(src: Path) -> Path:
-    """超大视频自动压缩:截短到 90 秒 + 长边 720p + CRF 28。"""
+async def _ffmpeg_reencode(
+    src: Path,
+    *,
+    max_duration: int | None = None,
+    suffix: str = "_reencoded",
+) -> Path:
+    """ffmpeg 重编码到 H.264 + 720p + CRF 28 mp4。
+
+    ``max_duration`` 给数字时会截短(单段模式压缩用),给 ``None`` 时保留完整时长(只换编码,
+    给 yt-dlp 兜底 codec 转换用,**不能丢内容**)。
+    """
     if shutil.which("ffmpeg") is None:
         raise RuntimeError(
-            "视频过大且 ffmpeg 未安装,无法自动压缩。"
-            "请用 `brew install ffmpeg` 安装后重试,或手动截短视频"
+            "ffmpeg 未安装,无法处理视频。请先 `brew install ffmpeg` 后重试。"
         )
-    out = src.with_name(f"{src.stem}_compressed.mp4")
-    log.info("视频过大(%.1f MB),启动 ffmpeg 自动压缩 → %s",
-             src.stat().st_size / 1024 / 1024, out.name)
 
-    # libx264 要求 width/height 都是偶数,加 force_divisible_by=2 强制
+    out = src.with_name(f"{src.stem}{suffix}.mp4")
+    log.info(
+        "ffmpeg 重编码:%s (%.1f MB) → %s (max_duration=%s)",
+        src.name, src.stat().st_size / 1024 / 1024, out.name, max_duration,
+    )
+
     scale = (
         f"scale='min({_COMPRESS_MAX_DIM},iw)':'min({_COMPRESS_MAX_DIM},ih)':"
         "force_original_aspect_ratio=decrease:force_divisible_by=2"
     )
-    cmd = [
+    cmd: list[str] = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-i", str(src),
-        "-t", str(_COMPRESS_MAX_DURATION),
+    ]
+    if max_duration is not None:
+        cmd += ["-t", str(max_duration)]
+    cmd += [
         "-vf", scale,
         "-c:v", "libx264", "-crf", str(_COMPRESS_CRF), "-preset", "veryfast",
         "-c:a", "aac", "-b:a", "64k",
@@ -170,22 +183,58 @@ async def _ffmpeg_compress(src: Path) -> Path:
     _, stderr = await proc.communicate()
     if proc.returncode != 0:
         err_txt = stderr.decode("utf-8", errors="replace")[:300]
-        raise RuntimeError(f"ffmpeg 压缩失败:{err_txt}")
+        raise RuntimeError(f"ffmpeg 重编码失败:{err_txt}")
     new_size = out.stat().st_size
-    log.info("压缩完成:%.1f MB → %.1f MB",
-             src.stat().st_size / 1024 / 1024, new_size / 1024 / 1024)
+    log.info(
+        "重编码完成:%.1f MB → %.1f MB",
+        src.stat().st_size / 1024 / 1024, new_size / 1024 / 1024,
+    )
     return out
 
 
-async def _path_to_data_url(path: Path) -> str:
-    """本地文件 → data:video/mp4;base64,... 形式的 DataURL。
+async def _ffmpeg_compress(src: Path) -> Path:
+    """单段模式压缩:截短到 90 秒 + 长边 720p + CRF 28。
 
-    超过 _MAX_VIDEO_BYTES 时自动用 ffmpeg 压缩到 90 秒 / 720p / CRF 28。
+    **会丢掉 90 秒之后的内容**,仅当确定走单段流程才用。长视频走分段不要调这个。
+    """
+    return await _ffmpeg_reencode(
+        src, max_duration=_COMPRESS_MAX_DURATION, suffix="_compressed",
+    )
+
+
+async def _ffmpeg_transcode_only(src: Path) -> Path:
+    """只转编码格式(AV1 → H.264)+ 缩 720p,保留**完整时长**,不丢内容。"""
+    return await _ffmpeg_reencode(src, max_duration=None, suffix="_h264")
+
+
+async def _path_to_data_url(path: Path) -> str:
+    """本地文件 → data:video/mp4;base64,... 形式的 DataURL(单段模式入口)。
+
+    单段模式两条硬约束:
+    - **时长 ≤ 90 秒**(MiMo 服务端限制,即便 size 不大,长视频也会被解读为空)
+    - **体积 base64 后 ≤ 50 MB**(原始 ≤ 35 MB)
+
+    任一不满足都立即抛 ValueError + 引导用户切换到「长视频分段分析」,
+    避免默默截短或返回乱码。
     """
     if not path.is_file():
         raise FileNotFoundError(f"本地视频不存在:{path}")
     size = path.stat().st_size
 
+    # 前置硬约束 1:时长。无论 size 多大,>90s 单段都没法分析(MiMo 实测会返回空内容)
+    duration = await _probe_video_duration(path)
+    if duration > _COMPRESS_MAX_DURATION + 1.0:
+        raise ValueError(
+            f"视频时长 {duration:.0f} 秒,超过单段分析上限"
+            f"({_COMPRESS_MAX_DURATION} 秒)。\n"
+            f"\n要分析完整 {duration:.0f} 秒的内容,请改用「长视频分段分析」:\n"
+            f"  · Web /vision 页面勾选「长视频分段分析」\n"
+            f"  · SDK:video_understand_chunked(...)\n"
+            f"  · API:POST /api/vision/video/chunked\n"
+            f"\n该模式会自动切段、逐段分析,最后由 v2.5-pro 综合成完整内容。"
+        )
+
+    # 前置硬约束 2:体积。超过则压缩(已知时长 ≤ 90s,所以可安全用 _ffmpeg_compress)
     if size > _AUTO_COMPRESS_TRIGGER:
         try:
             path = await _ffmpeg_compress(path)
@@ -202,7 +251,7 @@ async def _path_to_data_url(path: Path) -> str:
             max_mb = _MAX_VIDEO_BYTES // 1024 // 1024
             raise ValueError(
                 f"压缩后仍超 {max_mb} MB({size / 1024 / 1024:.1f} MB)。"
-                "请手动用更激进参数截短视频,例如把时长再缩到 30 秒。"
+                "请手动用更激进参数截短视频,或改用「长视频分段分析」模式。"
             )
 
     mime = mimetypes.guess_type(path.name)[0] or "video/mp4"
@@ -275,13 +324,14 @@ async def _yt_dlp_download(url: str) -> Path:
     log.info("yt-dlp 下载完成:%s (%d bytes)", final, final.stat().st_size)
 
     # 兼容性兜底:B 站等站点可能给 AV1 编码,MiMo 解不了。
-    # 检测 codec,非 H.264 / H.265 系列就强制走一次 ffmpeg 转码到 H.264。
+    # 检测 codec,非 H.264 / H.265 系列就强制转 H.264;**保留完整时长**,
+    # 不能用 _ffmpeg_compress(它会截到 90 秒丢内容,这是历史 bug 的根因)。
     codec = await _probe_video_codec(final)
     if codec and codec not in _COMPATIBLE_CODECS:
         log.warning(
-            "yt-dlp 产物是 %s 编码,MiMo vision 不兼容,强制转 H.264 mp4", codec,
+            "yt-dlp 产物是 %s 编码,MiMo vision 不兼容,转 H.264(保留完整时长)", codec,
         )
-        final = await _ffmpeg_compress(final)
+        final = await _ffmpeg_transcode_only(final)
     return final
 
 

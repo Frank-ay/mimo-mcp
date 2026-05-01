@@ -97,6 +97,23 @@ export default function Vision() {
   const [videoSource, setVideoSource] = useState<VideoSource>("file");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+
+  function handleVideoFileSelect(f: File | null) {
+    setVideoFile(f);
+    setVideoDuration(null);
+    if (!f) return;
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.src = URL.createObjectURL(f);
+    v.onloadedmetadata = () => {
+      setVideoDuration(Number.isFinite(v.duration) ? v.duration : null);
+      URL.revokeObjectURL(v.src);
+    };
+    v.onerror = () => {
+      URL.revokeObjectURL(v.src);
+    };
+  }
   const [videoUrl, setVideoUrl] = useState("");
   const [prompt, setPrompt] = useState("请详细描述这段内容。");
   const [chunkedMode, setChunkedMode] = useState(false);
@@ -259,20 +276,41 @@ export default function Vision() {
             </div>
 
             {videoSource === "file" ? (
-              <label className="flex cursor-pointer items-center gap-3 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-panel-2)] px-4 py-6 text-sm">
-                <FileVideo size={18} />
-                <span>
-                  {videoFile
-                    ? `${videoFile.name} (${(videoFile.size / 1024 / 1024).toFixed(2)} MB)`
-                    : "点击选择视频(mp4 / mov / webm)"}
-                </span>
-                <input
-                  type="file"
-                  accept="video/*"
-                  className="hidden"
-                  onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
-                />
-              </label>
+              <>
+                <label className="flex cursor-pointer items-center gap-3 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-panel-2)] px-4 py-6 text-sm">
+                  <FileVideo size={18} />
+                  <span>
+                    {videoFile
+                      ? `${videoFile.name} (${(videoFile.size / 1024 / 1024).toFixed(2)} MB${
+                          videoDuration
+                            ? ` · ${Math.floor(videoDuration / 60)}:${Math.floor(
+                                videoDuration % 60,
+                              )
+                                .toString()
+                                .padStart(2, "0")}`
+                            : ""
+                        })`
+                      : "点击选择视频(mp4 / mov / webm)"}
+                  </span>
+                  <input
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) =>
+                      handleVideoFileSelect(e.target.files?.[0] ?? null)
+                    }
+                  />
+                </label>
+                {videoDuration !== null &&
+                  videoDuration > 90 &&
+                  !chunkedMode && (
+                    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                      ⚠️ 该视频时长 {Math.floor(videoDuration)}{" "}
+                      秒,超过单段分析上限(90 秒)。
+                      要分析完整内容请勾选下方「长视频分段分析」,否则后端会拒绝并报错。
+                    </div>
+                  )}
+              </>
             ) : (
               <div className="space-y-2">
                 <input
