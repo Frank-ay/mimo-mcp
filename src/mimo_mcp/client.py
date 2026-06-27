@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -191,34 +192,52 @@ class MimoClient:
         return resp.json()
 
     # M1 实测确认的 ASR schema(2026-06-27,token-plan 端点):
-    # - 走 OpenAI 兼容 /audio/transcriptions,multipart/form-data
-    # - 必填:file(音频字节)+ model(mimo-v2.5-asr)
-    # - response_format=json → {"text": ...};verbose_json → 追加
-    #   duration / language / segments[{start,end,text,...}]
-    # - language 可传 auto / zh 等;timestamp_granularities[]=segment 拿分段
+    # - 走 OpenAI 兼容 /chat/completions(不是 /audio/transcriptions —— 该路径在
+    #   MiMo 网关 404)。音频以 base64 data URL 作为 input_audio 传入。
+    # - 必填:model(mimo-v2.5-asr)+ messages[input_audio];asr_options.language
+    #   仅支持 auto / zh / en(方言靠 auto 自动检测);base64 后体积上限 10MB。
+    # - 返回普通 chat completion,转写文本在 choices[0].message.content;
+    #   不返回分段时间戳 / duration(模型只产出纯文本)。
 
     async def transcribe(
         self,
         audio_bytes: bytes,
-        filename: str,
         *,
         model: str,
         language: str | None = None,
-        response_format: str = "json",
-        timestamp_granularity: str | None = None,
-        prompt: str | None = None,
-        content_type: str = "application/octet-stream",
+        content_type: str = "audio/wav",
     ) -> dict[str, Any]:
-        """ASR 语音转写。multipart 上传音频到 /audio/transcriptions。"""
-        files = {"file": (filename, audio_bytes, content_type)}
-        data: dict[str, str] = {"model": model, "response_format": response_format}
-        if language and language != "auto":
-            data["language"] = language
-        if timestamp_granularity:
-            data["timestamp_granularities[]"] = timestamp_granularity
-        if prompt:
-            data["prompt"] = prompt
-        resp = await self.client.post("/audio/transcriptions", data=data, files=files)
+        """ASR 语音转写:base64 音频 → /chat/completions,返回 chat completion。"""
+        audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+        # MiMo 仅接受 audio/wav | audio/mpeg | audio/mp3,规范化常见变体
+        # (mimetypes 会把 .wav 猜成 audio/x-wav,被服务端拒绝)
+        mime = (content_type or "audio/wav").lower()
+        mime = {
+            "audio/x-wav": "audio/wav",
+            "audio/wave": "audio/wav",
+            "audio/vnd.wave": "audio/wav",
+            "audio/mp3": "audio/mpeg",
+            "audio/x-mpeg": "audio/mpeg",
+        }.get(mime, mime)
+        if mime not in {"audio/wav", "audio/mpeg", "audio/mp3"}:
+            mime = "audio/wav"
+        lang = language if language in {"auto", "zh", "en"} else "auto"
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": f"data:{mime};base64,{audio_b64}"},
+                        }
+                    ],
+                }
+            ],
+            "asr_options": {"language": lang},
+        }
+        resp = await self.client.post("/chat/completions", json=body)
         self._check(resp)
         return resp.json()
 

@@ -47,7 +47,7 @@ INSTRUCTIONS = """\
 - mimo.chat / mimo.image_understand / mimo.video_understand:基于 MiMo-V2.5 全模态对话与理解
 - mimo.tts / mimo.voice_clone_create / mimo.voice_design_create:语音合成与音色管理
 - mimo.voice_list / mimo.voice_delete:本地音色库
-- mimo.asr:语音转写(mimo-v2.5-asr,支持本地路径 / 直链,可选分段时间戳)
+- mimo.asr:语音转写(mimo-v2.5-asr,支持本地路径 / 直链,language 可选 auto/zh/en)
 - mimo.health / mimo.usage:健康检查与用量
 
 调用约定:大文件请传"本地路径"或"http(s) URL",不要在 stdio 协议里塞 base64 大对象。
@@ -262,23 +262,19 @@ async def mimo_voice_delete(voice_id: str) -> dict[str, bool]:
 @mcp.tool(
     name="mimo.asr",
     description=(
-        "语音转写(F7)。传 audio_path(本地文件)或 audio_url(直链)之一;"
-        "with_timestamps=True 返回分段时间戳。默认走 mimo-v2.5-asr。"
+        "语音转写(F7)。传 audio_path(本地文件)或 audio_url(直链)之一,"
+        "language 可选 auto / zh / en。默认走 mimo-v2.5-asr,返回纯文本。"
     ),
 )
 async def mimo_asr(
     audio_path: str | None = None,
     audio_url: str | None = None,
     language: str = "auto",
-    with_timestamps: bool = False,
-    prompt: str | None = None,
 ) -> dict[str, Any]:
     req = ASRRequest(
         audio_path=audio_path,
         audio_url=audio_url,
         language=language,
-        with_timestamps=with_timestamps,
-        prompt=prompt,
     )
     try:
         result = await api_asr.transcribe(req)

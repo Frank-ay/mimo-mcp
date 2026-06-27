@@ -65,13 +65,18 @@ async def create_design(
     request: Request,
     voice_prompt: str = Form(...),
     name: str = Form(...),
+    sample_text: str | None = Form(None),
     optimize_text_preview: bool = Form(False),
 ) -> dict:
-    req = VoiceDesignCreateRequest(
-        voice_prompt=voice_prompt,
-        name=name,
-        optimize_text_preview=optimize_text_preview,
-    )
+    # sample_text 为空时不传,让 VoiceDesignCreateRequest 用其默认样本文本
+    payload: dict[str, object] = {
+        "voice_prompt": voice_prompt,
+        "name": name,
+        "optimize_text_preview": optimize_text_preview,
+    }
+    if sample_text:
+        payload["sample_text"] = sample_text
+    req = VoiceDesignCreateRequest(**payload)
     try:
         record = await voice_design.create_design(req, request.app.state.storage)
         return record.model_dump(mode="json")

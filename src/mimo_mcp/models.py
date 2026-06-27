@@ -89,11 +89,7 @@ class VoiceDesignCreateRequest(BaseModel):
 class ASRRequest(BaseModel):
     audio_path: str | None = None
     audio_url: str | None = None
-    language: str = "auto"
-    with_timestamps: bool = False
-    prompt: str | None = Field(
-        default=None, description="可选提示词,引导识别专有名词 / 术语(官方 ASR 支持)"
-    )
+    language: str = "auto"  # MiMo ASR(/chat/completions)仅支持 auto / zh / en
 
 
 class AuditLogEntry(BaseModel):
