@@ -20,7 +20,7 @@
 - `mimo.tts` 自动按 voice 类型路由到对应 MiMo 模型(default → tts / clone → voiceclone / design → voicedesign)
 - 含 Token Plan 套餐适配 + thinking 模型 max_tokens 兜底等踩坑经验
 - Web 控制台支持长文按句末标点自动切段批量合成(SSE 流式渲染)
-- TTS 支持 v2.5 自然语言风格指令(导演模式)与音频标签;ASR(`mimo-v2.5-asr`)支持分段时间戳
+- TTS 支持 v2.5 自然语言风格指令(导演模式)与音频标签;ASR(`mimo-v2.5-asr`)中英双语 + 方言识别、自动加标点
 
 ---
 
@@ -136,7 +136,7 @@ command = "/Users/Frank-ay/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
 | `mimo.voice_design_create` | 文字描述生成自定义音色 |
 | `mimo.voice_list` | 列出本地音色库 |
 | `mimo.voice_delete` | 删除本地音色 |
-| `mimo.asr` | 语音转写(mimo-v2.5-asr,支持本地路径 / 直链、可选分段时间戳、可选 `prompt` 引导专有名词) |
+| `mimo.asr` | 语音转写(mimo-v2.5-asr,走 `/chat/completions` 的 input_audio;支持本地路径 / 直链,language 可选 auto/zh/en,返回纯文本) |
 | `mimo.health` | 健康检查(配置 / 网络 / 鉴权 / ASR 可用性) |
 | `mimo.usage` | 本地 audit_log 聚合的最近用量 |
 
@@ -193,7 +193,7 @@ M0 冒烟覆盖:模块可 import / Storage CRUD / health_check 不抛 / 11 个 t
 如果你买的是「Token Plan 套餐」(API Key 以 `tp-` 开头):
 
 1. **必须用专属 base URL**,否则报 `Invalid API Key`。在 platform.xiaomimimo.com 控制台「我的套餐」页面复制「专属 Base URL → 兼容 OpenAI 接口协议」,典型形式 `https://token-plan-cn.xiaomimimo.com/v1`,填到 `.env` 的 `MIMO_BASE_URL`。
-2. **套餐含(V2.5 系列)**:V2.5-Pro / V2.5 / V2.5-TTS / V2.5-TTS-VoiceClone / V2.5-TTS-VoiceDesign / V2.5-ASR(`mimo-v2.5-asr`,走 `/audio/transcriptions`,F7 已实测可用,支持分段时间戳)。**不含**:V2-Flash。
+2. **套餐含(V2.5 系列)**:V2.5-Pro / V2.5 / V2.5-TTS / V2.5-TTS-VoiceClone / V2.5-TTS-VoiceDesign / V2.5-ASR(`mimo-v2.5-asr`,走 `/chat/completions` 的 input_audio(base64),F7 实测可用,返回纯文本)。**不含**:V2-Flash。
    > ⚠️ **V2 系列下线**:`MiMo-V2-TTS` 已于 2026-06-27 自动转发至 `MiMo-V2.5-TTS`,整个 V2 系列(V2-Pro / V2-Omni / V2-TTS)将于 **2026-06-30 正式下线**、原模型名失效。本仓库默认全部使用 V2.5 系列,不受影响。
 3. **v2.5 是 thinking 模型**:返回的 `message.reasoning_content` 是思考链,真正回复在 `message.content`。如果 `max_tokens` 太小(< 1024)会只见思考、不见回复。本仓库已把默认 `MIMO_DEFAULT_MAX_TOKENS=4096`,长文任务可临时调到 8192+。
 4. **使用范围**:套餐合规用法是「在编程工具中使用」(Claude Code / Codex / OpenCode 等);本仓库的 mimo-mcp 正属于这类。Web 沙盒在本机做轻量调试也无问题,不要做高频自动化压测。
