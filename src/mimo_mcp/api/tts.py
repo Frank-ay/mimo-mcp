@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from ..client import MimoClient
 from ..config import get_settings
 from ..models import TTSRequest, VoiceRecord, VoiceSource, VoiceStatus
 from ..storage import Storage
+
+log = logging.getLogger(__name__)
 
 # M1 实测从 400 错误响应里捞出的预置 voice 列表
 DEFAULT_VOICES: list[tuple[str, str]] = [
@@ -92,15 +95,34 @@ async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[st
             used_source = "clone"
 
         elif record and record.source == VoiceSource.DESIGN:
-            if not record.voice_prompt:
-                raise ValueError(f"设计音色 {voice_token} 缺失 voice_prompt")
-            resp = await client.voice_design(
-                voice_prompt=record.voice_prompt,
-                sample_text=req.text,
-                model=settings.default_voice_design_model,
-                audio_format=audio_format,
-            )
-            used_model = settings.default_voice_design_model
+            # voicedesign 是 stateless 的:用 prompt 重新生成会导致音色每次漂移
+            # (实测同文本两次字节差 ~41%)。创建时已把试听音频固化到 reference_path,
+            # 朗读新文本时改用它走 voiceclone 复刻,锁定为“创建时那一版”音色,
+            # 保证 MCP / Web / 多次调用之间一致(实测降到 ~7%)。
+            if record.reference_path and Path(record.reference_path).is_file():
+                resp = await client.voice_clone(
+                    text=req.text,
+                    reference_data_url=_data_url(Path(record.reference_path)),
+                    model=settings.default_voice_clone_model,
+                    audio_format=audio_format,
+                    instructions=instructions,
+                )
+                used_model = settings.default_voice_clone_model
+            elif record.voice_prompt:
+                # 试听音频缺失才回退 prompt 重新设计(音色可能漂移,记日志告警)
+                log.warning(
+                    "design 音色 %s 试听音频缺失,回退 voicedesign 重新生成(音色可能不一致)",
+                    voice_token,
+                )
+                resp = await client.voice_design(
+                    voice_prompt=record.voice_prompt,
+                    sample_text=req.text,
+                    model=settings.default_voice_design_model,
+                    audio_format=audio_format,
+                )
+                used_model = settings.default_voice_design_model
+            else:
+                raise ValueError(f"设计音色 {voice_token} 既无试听音频也无 voice_prompt")
             used_source = "design"
 
         else:
