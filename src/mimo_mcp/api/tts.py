@@ -29,7 +29,7 @@ DEFAULT_VOICES: list[tuple[str, str]] = [
     ("mimo_default", "默认音色 — 中性、清晰"),
     ("冰糖", "中文女声 · 温暖甜润"),
     ("茉莉", "中文女声 · 端庄大方"),
-    ("苏打", "中文女声 · 活泼明亮"),
+    ("苏打", "中文男声 · 活泼明亮"),
     ("白桦", "中文男声 · 沉稳磁性"),
     ("Mia", "英文女声 · clear & natural"),
     ("Chloe", "英文女声 · soft & warm"),
@@ -50,17 +50,18 @@ def _data_url(path: Path, mime: str = "audio/wav") -> str:
     return f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
-def _extra_audio(req: TTSRequest) -> dict[str, Any]:
-    """把 speed / style 等高级字段拼成 audio dict 透传给 MiMo。
+def _build_instructions(req: TTSRequest) -> str | None:
+    """v2.5 风格控制:优先用 instructions(完整自然语言 / 导演模式指令);
+    否则把简易 style 词转成一句指令。
 
-    Phase 0 实测显示当前不生效,但保留透传以备 MiMo 修复后立即可用。
+    注:v2.5 通过 user 消息(自然语言)控制风格,没有 audio.speed / audio.style
+    这类参数(旧透传实测无效),故 speed 字段已废弃、不再下发。
     """
-    extras: dict[str, Any] = {}
-    if req.speed is not None:
-        extras["speed"] = req.speed
+    if req.instructions:
+        return req.instructions
     if req.style:
-        extras["style"] = req.style
-    return extras
+        return f"请用「{req.style}」的风格和语气来朗读。"
+    return None
 
 
 async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[str, str | int]:
@@ -68,7 +69,7 @@ async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[st
     settings = get_settings()
     voice_token = req.voice or req.voice_id or "mimo_default"
     audio_format = req.audio_format or "wav"
-    extras = _extra_audio(req)
+    instructions = _build_instructions(req)
 
     record: VoiceRecord | None = None
     if storage is not None:
@@ -85,6 +86,7 @@ async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[st
                 reference_data_url=_data_url(Path(record.reference_path)),
                 model=settings.default_voice_clone_model,
                 audio_format=audio_format,
+                instructions=instructions,
             )
             used_model = settings.default_voice_clone_model
             used_source = "clone"
@@ -108,7 +110,7 @@ async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[st
                 voice=voice_token,
                 model=settings.default_tts_model,
                 audio_format=audio_format,
-                extra_audio=extras or None,
+                instructions=instructions,
             )
             used_model = settings.default_tts_model
             used_source = "default"
@@ -205,10 +207,11 @@ async def synthesize_batch(
     voice: str | None = None,
     voice_id: str | None = None,
     audio_format: str = "wav",
+    instructions: str | None = None,
     segment_max_chars: int = 120,
     storage: Storage | None = None,
 ) -> AsyncIterator[BatchSegment]:
-    """长文按段切分,顺序合成,逐段 yield。"""
+    """长文按段切分,顺序合成,逐段 yield。instructions 对每段统一生效。"""
     segments = split_text(text, segment_max_chars)
     total = len(segments)
     if total == 0:
@@ -221,6 +224,7 @@ async def synthesize_batch(
                 voice=voice,
                 voice_id=voice_id,
                 audio_format=audio_format,
+                instructions=instructions,
             ),
             storage,
         )

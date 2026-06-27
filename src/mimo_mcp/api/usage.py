@@ -29,16 +29,21 @@ async def health_check() -> HealthResult:
         result.base_url_reachable = await client.ping()
         if result.base_url_reachable:
             result.auth_valid = await client.auth_check()
+            if result.auth_valid:
+                # 鉴权通过才探测 ASR 可用性,复用同一连接
+                result.asr_cloud_available = await cloud_available(client)
         else:
             result.notes.append("base_url 不可达,检查网络或 MIMO_BASE_URL。")
 
     if result.auth_valid is False:
         result.notes.append("API Key 无效或已过期,请重新生成。")
 
-    result.asr_cloud_available = await cloud_available()
-    if not result.asr_cloud_available:
+    if result.asr_cloud_available:
+        result.notes.append(f"F7 ASR 可用(模型 {settings.default_asr_model})。")
+    elif result.auth_valid:
         result.notes.append(
-            "F7 ASR 云端 API 暂未开放(决策见 PRD §15-Q6:不预置本地兜底)。"
+            "F7 ASR 不可用:账号 /models 未包含 "
+            f"{settings.default_asr_model}(Token Plan 套餐应含,请检查 MIMO_BASE_URL / 套餐)。"
         )
     return result
 

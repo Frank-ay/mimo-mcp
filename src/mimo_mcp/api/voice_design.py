@@ -40,6 +40,7 @@ async def create_design(req: VoiceDesignCreateRequest, storage: Storage) -> Voic
             voice_prompt=req.voice_prompt,
             sample_text=req.sample_text,
             model=settings.default_voice_design_model,
+            optimize_text_preview=req.optimize_text_preview,
         )
 
     audio = resp["choices"][0]["message"]["audio"]

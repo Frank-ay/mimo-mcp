@@ -47,7 +47,7 @@ INSTRUCTIONS = """\
 - mimo.chat / mimo.image_understand / mimo.video_understand:基于 MiMo-V2.5 全模态对话与理解
 - mimo.tts / mimo.voice_clone_create / mimo.voice_design_create:语音合成与音色管理
 - mimo.voice_list / mimo.voice_delete:本地音色库
-- mimo.asr:语音转写(若官方云端 ASR 未开放,会返回 unavailable)
+- mimo.asr:语音转写(mimo-v2.5-asr,支持本地路径 / 直链,可选分段时间戳)
 - mimo.health / mimo.usage:健康检查与用量
 
 调用约定:大文件请传"本地路径"或"http(s) URL",不要在 stdio 协议里塞 base64 大对象。
@@ -160,22 +160,31 @@ async def mimo_video_understand(
 # ---------------------------------------------------------------------------
 # F4 TTS
 # ---------------------------------------------------------------------------
-@mcp.tool(name="mimo.tts", description="文本合成语音。voice 可选预置(mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean)或自建 voice_id。返回本地 wav 路径。")
+@mcp.tool(
+    name="mimo.tts",
+    description=(
+        "文本合成语音。voice 选预置(mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean)"
+        "或自建 voice_id;instructions 可传自然语言风格指令(v2.5 导演模式:角色/场景/指导);"
+        "文本里也可嵌 (风格)/[音频标签]/(唱歌) 标签。返回本地 wav 路径。"
+    ),
+)
 async def mimo_tts(
     text: str,
     voice_id: str | None = None,
     voice: str | None = None,
     audio_format: Literal["wav", "mp3", "opus"] = "wav",
-    speed: float | None = None,
+    instructions: str | None = None,
     style: str | None = None,
+    speed: float | None = None,  # v2.5 已废弃:模型无此参数,保留仅为向后兼容
 ) -> dict[str, str | int]:
     req = TTSRequest(
         text=text,
         voice_id=voice_id,
         voice=voice,
         audio_format=audio_format,
-        speed=speed,
+        instructions=instructions,
         style=style,
+        speed=speed,
     )
     try:
         result = await api_tts.synthesize(req, _get_storage())
@@ -214,8 +223,14 @@ async def mimo_voice_design_create(
     voice_prompt: str,
     name: str,
     sample_text: str = "你好,这是 MiMo voice design 的试听样本,欢迎使用。",
+    optimize_text_preview: bool = False,
 ) -> dict[str, Any]:
-    req = VoiceDesignCreateRequest(voice_prompt=voice_prompt, name=name, sample_text=sample_text)
+    req = VoiceDesignCreateRequest(
+        voice_prompt=voice_prompt,
+        name=name,
+        sample_text=sample_text,
+        optimize_text_preview=optimize_text_preview,
+    )
     try:
         record = await api_voice_design.create_design(req, _get_storage())
         await _audit("mimo.voice_design_create", "ok", model="mimo-v2.5-tts-voicedesign")
@@ -244,24 +259,34 @@ async def mimo_voice_delete(voice_id: str) -> dict[str, bool]:
 # ---------------------------------------------------------------------------
 # F7 ASR
 # ---------------------------------------------------------------------------
-@mcp.tool(name="mimo.asr", description="语音转写。M0 占位:云端 API 形态待 M1 实测,暂返回 unavailable。")
+@mcp.tool(
+    name="mimo.asr",
+    description=(
+        "语音转写(F7)。传 audio_path(本地文件)或 audio_url(直链)之一;"
+        "with_timestamps=True 返回分段时间戳。默认走 mimo-v2.5-asr。"
+    ),
+)
 async def mimo_asr(
     audio_path: str | None = None,
     audio_url: str | None = None,
     language: str = "auto",
     with_timestamps: bool = False,
+    prompt: str | None = None,
 ) -> dict[str, Any]:
     req = ASRRequest(
         audio_path=audio_path,
         audio_url=audio_url,
         language=language,
         with_timestamps=with_timestamps,
+        prompt=prompt,
     )
     try:
-        return await api_asr.transcribe(req)
-    except NotImplementedError as e:
-        await _audit("mimo.asr", "error", error="not_implemented")
-        return {"status": "unavailable", "reason": str(e)}
+        result = await api_asr.transcribe(req)
+        await _audit("mimo.asr", "ok", model=result.get("model"))
+        return result
+    except Exception as e:
+        await _audit("mimo.asr", "error", error=str(e))
+        raise
 
 
 # ---------------------------------------------------------------------------

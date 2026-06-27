@@ -65,8 +65,13 @@ async def create_design(
     request: Request,
     voice_prompt: str = Form(...),
     name: str = Form(...),
+    optimize_text_preview: bool = Form(False),
 ) -> dict:
-    req = VoiceDesignCreateRequest(voice_prompt=voice_prompt, name=name)
+    req = VoiceDesignCreateRequest(
+        voice_prompt=voice_prompt,
+        name=name,
+        optimize_text_preview=optimize_text_preview,
+    )
     try:
         record = await voice_design.create_design(req, request.app.state.storage)
         return record.model_dump(mode="json")
