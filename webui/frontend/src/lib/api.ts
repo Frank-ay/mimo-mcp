@@ -75,8 +75,11 @@ export interface TTSBody {
   voice?: string;
   voice_id?: string;
   audio_format?: AudioFormat;
-  speed?: number;
-  style?: string;
+  /**
+   * v2.5 自然语言风格指令(导演模式):控制语气 / 情绪 / 语速 / 方言等。
+   * v2.5 唯一推荐的风格控制入口(旧的 speed 已废弃不下发;style 仅作为 instructions 的简易回退)。
+   */
+  instructions?: string;
 }
 
 export interface TTSResult {
@@ -147,6 +150,122 @@ export interface ChunkedHandlers {
   onDone?: () => void;
 }
 
+// ---- ASR 类型 ----
+export interface ASRResult {
+  text: string;
+  model: string;
+  language: string | null;
+}
+
+// ---- ASR 长音频分段(SSE)----
+export interface ASRChunkPlanEvent {
+  kind: "plan";
+  total: number;
+  duration: number;
+  segment_seconds: number;
+  segments: { index: number; start: number; end: number; bytes: number }[];
+}
+
+export interface ASRChunkSegmentEvent {
+  kind: "segment";
+  index: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface ASRChunkSummaryEvent {
+  kind: "summary";
+  text: string;
+  total: number;
+  duration: number;
+}
+
+export interface ASRChunkHandlers {
+  onPlan?: (e: ASRChunkPlanEvent) => void;
+  onSegment?: (e: ASRChunkSegmentEvent) => void;
+  onSummary?: (e: ASRChunkSummaryEvent) => void;
+  onError?: (msg: string) => void;
+  onDone?: () => void;
+}
+
+// ---- ASR 说话人分离(SSE)----
+export interface DiarizeSegment {
+  index: number;
+  speaker: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface DiarizePlanEvent {
+  kind: "plan";
+  total: number;
+  duration: number;
+  num_speakers: number;
+  segments: { index: number; speaker: number; start: number; end: number }[];
+}
+
+export interface DiarizeSegmentEvent extends DiarizeSegment {
+  kind: "segment";
+}
+
+export interface DiarizeSummaryEvent {
+  kind: "summary";
+  duration: number;
+  num_speakers: number;
+  segments: DiarizeSegment[];
+}
+
+export interface DiarizeHandlers {
+  onStatus?: (msg: string) => void;
+  onPlan?: (e: DiarizePlanEvent) => void;
+  onSegment?: (e: DiarizeSegmentEvent) => void;
+  onSummary?: (e: DiarizeSummaryEvent) => void;
+  onError?: (msg: string) => void;
+  onDone?: () => void;
+}
+
+// ---- Chat 类型 ----
+export interface ChatMessageInput {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface ChatBody {
+  messages: ChatMessageInput[];
+  model?: string;
+  max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+}
+
+export interface ChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  completion_tokens_details?: { reasoning_tokens?: number };
+}
+
+export interface ChatResponseMessage {
+  role?: string;
+  content?: string | null;
+  /** v2.5 thinking 模型的思维链(reasoning_content),正文在 content */
+  reasoning_content?: string | null;
+}
+
+export interface ChatChoice {
+  index?: number;
+  finish_reason?: string | null;
+  message?: ChatResponseMessage;
+}
+
+export interface ChatResponse {
+  model?: string;
+  choices?: ChatChoice[];
+  usage?: ChatUsage;
+}
+
 // ---- 端点 ----
 export const api = {
   health: () => request<HealthResult>("/usage/health"),
@@ -157,12 +276,35 @@ export const api = {
     request<VoiceRecord[]>(`/voices${source ? `?source=${source}` : ""}`),
   deleteVoice: (id: string) =>
     request<{ deleted: boolean }>(`/voices/${id}`, { method: "DELETE" }),
-  createClone: (form: FormData) =>
-    request<VoiceRecord>("/voices/clone", { method: "POST", body: form }),
-  createDesign: (form: FormData) =>
-    request<VoiceRecord>("/voices/design", { method: "POST", body: form }),
-  chat: (body: unknown) =>
-    request<unknown>("/chat", {
+  createClone: (input: { file: File; name: string; description?: string }) => {
+    const form = new FormData();
+    form.append("file", input.file);
+    form.append("name", input.name);
+    if (input.description) form.append("description", input.description);
+    return request<VoiceRecord>("/voices/clone", {
+      method: "POST",
+      body: form,
+    });
+  },
+  createDesign: (input: {
+    voice_prompt: string;
+    name: string;
+    sample_text?: string;
+    optimize_text_preview?: boolean;
+  }) => {
+    const form = new FormData();
+    form.append("voice_prompt", input.voice_prompt);
+    form.append("name", input.name);
+    if (input.sample_text) form.append("sample_text", input.sample_text);
+    if (input.optimize_text_preview)
+      form.append("optimize_text_preview", "true");
+    return request<VoiceRecord>("/voices/design", {
+      method: "POST",
+      body: form,
+    });
+  },
+  chat: (body: ChatBody) =>
+    request<ChatResponse>("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -250,8 +392,115 @@ export const api = {
     }
   },
 
-  asr: (form: FormData) =>
-    request<unknown>("/asr", { method: "POST", body: form }),
+  asr: (input: { file: File; language?: string }) => {
+    const form = new FormData();
+    form.append("file", input.file);
+    form.append("language", input.language ?? "auto");
+    return request<ASRResult>("/asr", { method: "POST", body: form });
+  },
+
+  // ASR 说话人分离转写(sherpa-onnx diarization + MiMo 逐段转写),SSE 流式
+  asrDiarize: async (
+    form: FormData,
+    handlers: DiarizeHandlers,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const resp = await fetch(`${BASE}/asr/diarize`, {
+      method: "POST",
+      body: form,
+      signal,
+    });
+    if (!resp.ok || !resp.body) {
+      handlers.onError?.(await resp.text().catch(() => resp.statusText));
+      return;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let sep = buf.indexOf("\n\n");
+      while (sep !== -1) {
+        const raw = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        sep = buf.indexOf("\n\n");
+        let event = "message";
+        let data = "";
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        try {
+          const obj = JSON.parse(data);
+          if (event === "status") handlers.onStatus?.(obj.message ?? "");
+          else if (event === "plan") handlers.onPlan?.(obj as DiarizePlanEvent);
+          else if (event === "segment")
+            handlers.onSegment?.(obj as DiarizeSegmentEvent);
+          else if (event === "summary")
+            handlers.onSummary?.(obj as DiarizeSummaryEvent);
+          else if (event === "error")
+            handlers.onError?.(obj.message ?? "未知错误");
+          else if (event === "done") handlers.onDone?.();
+        } catch {
+          // 忽略解析错误,继续读
+        }
+      }
+    }
+  },
+
+  // ASR 长音频分段转写,SSE 流式(切段 → 逐段转写 → 合并)
+  asrChunked: async (
+    form: FormData,
+    handlers: ASRChunkHandlers,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const resp = await fetch(`${BASE}/asr/chunked`, {
+      method: "POST",
+      body: form,
+      signal,
+    });
+    if (!resp.ok || !resp.body) {
+      handlers.onError?.(await resp.text().catch(() => resp.statusText));
+      return;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let sep = buf.indexOf("\n\n");
+      while (sep !== -1) {
+        const raw = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        sep = buf.indexOf("\n\n");
+        let event = "message";
+        let data = "";
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        try {
+          const obj = JSON.parse(data);
+          if (event === "plan") handlers.onPlan?.(obj as ASRChunkPlanEvent);
+          else if (event === "segment")
+            handlers.onSegment?.(obj as ASRChunkSegmentEvent);
+          else if (event === "summary")
+            handlers.onSummary?.(obj as ASRChunkSummaryEvent);
+          else if (event === "error")
+            handlers.onError?.(obj.message ?? "未知错误");
+          else if (event === "done") handlers.onDone?.();
+        } catch {
+          // 忽略解析错误,继续读
+        }
+      }
+    }
+  },
 
   // 用 v2.5-pro 改写朗读文本(口语化、补标点、数字念法等)
   ttsRefine: (body: { text: string; style?: string }) =>

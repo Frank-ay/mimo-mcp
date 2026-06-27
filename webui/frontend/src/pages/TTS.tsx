@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Clapperboard,
   Download,
   Eraser,
   Loader2,
@@ -10,85 +11,51 @@ import {
   Trash2,
   Volume2,
 } from "lucide-react";
-import {
-  api,
-  type AudioFormat,
-  type BatchSegmentEvent,
-  type TTSResult,
-  type VoiceRecord,
-} from "@/lib/api";
+import { api, type AudioFormat } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardDesc, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatDateTime, truncate } from "@/lib/utils";
-
-type Mode = "single" | "batch";
-
-interface HistoryItem {
-  id: string;
-  ts: string;
-  mode: Mode;
-  text: string;
-  voice: string;
-  source: VoiceRecord["source"];
-  audio_format: AudioFormat;
-  segments: { audio_url: string; bytes: number; text: string }[];
-  total_bytes: number;
-}
-
-const HISTORY_KEY = "mimo:tts:history";
-const HISTORY_MAX = 20;
-
-const SOURCE_LABEL: Record<VoiceRecord["source"], string> = {
-  default: "预置",
-  clone: "克隆",
-  design: "设计",
-};
-
-function loadHistory(): HistoryItem[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? (JSON.parse(raw) as HistoryItem[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(items: HistoryItem[]) {
-  try {
-    localStorage.setItem(
-      HISTORY_KEY,
-      JSON.stringify(items.slice(0, HISTORY_MAX)),
-    );
-  } catch {
-    // localStorage 满或被禁,直接吞
-  }
-}
+import {
+  aiRefine,
+  clearHistory,
+  clearText,
+  type HistoryItem,
+  runTts,
+  setFormat,
+  setInstructions,
+  setMode,
+  setRefineStyle,
+  setSegMax,
+  setText,
+  setVoice,
+  SOURCE_LABEL,
+  ttsStore,
+  undoRefine,
+} from "./tts.store";
 
 export default function TTS() {
-  const [mode, setMode] = useState<Mode>("single");
-  const [text, setText] = useState(
-    "你好,这里是 mimo-mcp 的网页文字转语音控制台,选一个音色,点合成试试看。",
-  );
-  const [voice, setVoice] = useState("mimo_default");
-  const [format, setFormat] = useState<AudioFormat>("wav");
-  const [segMax, setSegMax] = useState(120);
+  const st = ttsStore.use();
+  const {
+    mode,
+    text,
+    voice,
+    format,
+    segMax,
+    refineStyle,
+    instructions,
+    single,
+    batch,
+    loading,
+    refining,
+    textBeforeRefine,
+    refineNotice,
+    error,
+    playToken,
+    history,
+  } = st;
 
-  const [single, setSingle] = useState<TTSResult | null>(null);
-  const [batch, setBatch] = useState<{
-    total: number;
-    items: BatchSegmentEvent[];
-  } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [refining, setRefining] = useState(false);
-  const [refineStyle, setRefineStyle] = useState("");
-  const [textBeforeRefine, setTextBeforeRefine] = useState<string | null>(null);
-  const [refineNotice, setRefineNotice] = useState("");
-  const [error, setError] = useState("");
-
-  const [history, setHistory] = useState<HistoryItem[]>(() => loadHistory());
   const audioRef = useRef<HTMLAudioElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
   const voicesQ = useQuery({
     queryKey: ["voices"],
@@ -103,143 +70,17 @@ export default function TTS() {
     };
   }, [voicesQ.data]);
 
+  // 单段合成完成后自动播放:只在 playToken 真正增长时触发,
+  // 切回页面组件重新挂载时(token 未变)不会误重播。
+  const playedRef = useRef(playToken);
   useEffect(() => {
-    saveHistory(history);
-  }, [history]);
-
-  function pushHistory(item: HistoryItem) {
-    setHistory((prev) => [item, ...prev].slice(0, HISTORY_MAX));
-  }
-
-  async function aiRefine() {
-    if (!text.trim()) {
-      setError("请先输入文本再改写");
-      return;
-    }
-    setRefining(true);
-    setError("");
-    setRefineNotice("");
-    const original = text;
-    try {
-      const r = await api.ttsRefine({
-        text: original,
-        style: refineStyle.trim() || undefined,
-      });
-      setTextBeforeRefine(original);
-      setText(r.refined);
-      setRefineNotice(
-        `已优化为更适合朗读的版本:${r.char_count_before} → ${r.char_count_after} 字 · 耗时 ${(r.latency_ms / 1000).toFixed(1)} 秒`,
-      );
-    } catch (e) {
-      setError(`改写失败:${e}`);
-    } finally {
-      setRefining(false);
-    }
-  }
-
-  function undoRefine() {
-    if (textBeforeRefine !== null) {
-      setText(textBeforeRefine);
-      setTextBeforeRefine(null);
-      setRefineNotice("");
-    }
-  }
-
-  async function runSingle() {
-    setLoading(true);
-    setError("");
-    setSingle(null);
-    setBatch(null);
-    try {
-      const r = await api.ttsSynthesize({
-        text,
-        voice,
-        audio_format: format,
-      });
-      setSingle(r);
-      pushHistory({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        ts: new Date().toISOString(),
-        mode: "single",
-        text,
-        voice: r.voice,
-        source: r.source,
-        audio_format: r.audio_format,
-        segments: [{ audio_url: r.audio_url, bytes: r.bytes, text }],
-        total_bytes: r.bytes,
-      });
-      // 自动播放
+    if (playToken > playedRef.current) {
+      playedRef.current = playToken;
       requestAnimationFrame(() =>
         audioRef.current?.play().catch(() => undefined),
       );
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
     }
-  }
-
-  async function runBatch() {
-    setLoading(true);
-    setError("");
-    setSingle(null);
-    setBatch({ total: 0, items: [] });
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-
-    const items: BatchSegmentEvent[] = [];
-    let total = 0;
-    let voiceUsed = voice;
-    let sourceUsed: VoiceRecord["source"] = "default";
-
-    try {
-      await api.ttsBatch(
-        { text, voice, audio_format: format, segment_max_chars: segMax },
-        {
-          onPlan: (e) => {
-            total = e.total;
-            setBatch({ total: e.total, items: [] });
-          },
-          onSegment: (e) => {
-            items.push(e);
-            voiceUsed = e.voice;
-            sourceUsed = e.source;
-            setBatch({ total, items: [...items] });
-          },
-          onError: (msg) => setError(msg),
-          onDone: () => {
-            const totalBytes = items.reduce((s, x) => s + x.bytes, 0);
-            if (items.length > 0) {
-              pushHistory({
-                id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                ts: new Date().toISOString(),
-                mode: "batch",
-                text,
-                voice: voiceUsed,
-                source: sourceUsed,
-                audio_format: format,
-                segments: items.map((x) => ({
-                  audio_url: x.audio_url,
-                  bytes: x.bytes,
-                  text: x.text,
-                })),
-                total_bytes: totalBytes,
-              });
-            }
-          },
-        },
-        abortRef.current.signal,
-      );
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function clearHistory() {
-    setHistory([]);
-  }
+  }, [playToken]);
 
   function fmtBytes(n: number) {
     if (n < 1024) return `${n} B`;
@@ -292,12 +133,7 @@ export default function TTS() {
                 size="sm"
                 onClick={() => {
                   if (text.length > 80 && !confirm("确定清空当前文本?")) return;
-                  setText("");
-                  setSingle(null);
-                  setBatch(null);
-                  setError("");
-                  setRefineNotice("");
-                  setTextBeforeRefine(null);
+                  clearText();
                 }}
                 disabled={loading || refining || text.length === 0}
                 title="一键清空文本"
@@ -326,7 +162,7 @@ export default function TTS() {
                 让朗读更自然(可选)
               </span>
               <span className="text-xs text-[var(--color-fg-muted)]">
-                · 数字念中文 · 英文缩写展开 · 书面语转口语 · 自动补标点
+                · 改写文字本身 · 数字念中文 · 英文缩写展开 · 自动补标点
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -373,6 +209,27 @@ export default function TTS() {
             </div>
           )}
 
+          {/* 导演模式 — v2.5 自然语言风格指令,只调声音不改文字 */}
+          <div className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] px-3 py-2.5">
+            <div className="mb-2 flex items-center gap-2">
+              <Clapperboard size={14} className="text-[var(--color-accent)]" />
+              <span className="text-sm font-medium text-[var(--color-fg)]">
+                导演模式(可选)
+              </span>
+              <span className="text-xs text-[var(--color-fg-muted)]">
+                · v2.5 自然语言指令 · 不改文字,只调声音的语气 / 情绪 / 语速 /
+                方言
+              </span>
+            </div>
+            <textarea
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              rows={2}
+              placeholder="例如:用沉稳的纪录片旁白语气,语速稍慢,句间留一点停顿;或:活泼一点,像在跟朋友聊天"
+              className="w-full resize-y rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-1.5 text-xs"
+            />
+          </div>
+
           <div className="mt-3 flex items-center justify-between">
             <div className="text-xs text-[var(--color-fg-muted)]">
               {mode === "batch"
@@ -380,7 +237,7 @@ export default function TTS() {
                 : "提示:单段模式适合短文本(≤ 200 字),长文请切到批量"}
             </div>
             <Button
-              onClick={mode === "single" ? runSingle : runBatch}
+              onClick={runTts}
               disabled={loading || refining || !text.trim()}
             >
               {loading ? (
@@ -477,7 +334,8 @@ export default function TTS() {
               <div className="mb-1 font-medium text-[var(--color-fg)]">
                 说明
               </div>
-              speed / style 字段在 Phase 0 实测无效,UI 暂不暴露。详见
+              v2.5 用「导演模式」(自然语言 instructions)控制语气 / 情绪 / 语速 /
+              方言;旧的 speed 已废弃不下发,style 仅作简易回退。详见
               docs/api-research.md。
             </div>
           </div>
@@ -575,7 +433,7 @@ export default function TTS() {
         <CardHeader>
           <div>
             <CardTitle>本会话历史</CardTitle>
-            <CardDesc>最多 {HISTORY_MAX} 条 · localStorage 持久化</CardDesc>
+            <CardDesc>最多 20 条 · localStorage 持久化</CardDesc>
           </div>
           {history.length > 0 && (
             <Button variant="ghost" size="sm" onClick={clearHistory}>

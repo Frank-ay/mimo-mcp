@@ -21,11 +21,11 @@ export default function VoiceClone() {
     setSubmitting(true);
     setError("");
     try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("name", name);
-      if (description) form.append("description", description);
-      await api.createClone(form);
+      await api.createClone({
+        file,
+        name,
+        description: description.trim() || undefined,
+      });
       nav("/voices");
     } catch (e) {
       setError(String(e));
@@ -39,7 +39,8 @@ export default function VoiceClone() {
       <div>
         <h1 className="text-2xl font-bold">声音克隆</h1>
         <p className="text-sm text-[var(--color-fg-muted)]">
-          上传 10-15 秒清晰参考音频,M1 阶段接入 MiMo 后自动得到 voice_id
+          上传 10-15 秒清晰参考音频,提交后会立即跑一次试听并生成 voice_id,可在
+          mimo.tts / mimo.chat 中引用
         </p>
       </div>
 
@@ -87,10 +88,16 @@ export default function VoiceClone() {
           </div>
         )}
 
-        {error && <div className="mt-3 rounded-md bg-red-500/10 p-2 text-sm text-red-300">{error}</div>}
+        {error && (
+          <div className="mt-3 rounded-md bg-red-500/10 p-2 text-sm text-red-300">
+            {error}
+          </div>
+        )}
 
         <div className="mt-4 flex justify-end gap-2">
-          <Button variant="outline" onClick={() => nav("/voices")}>取消</Button>
+          <Button variant="outline" onClick={() => nav("/voices")}>
+            取消
+          </Button>
           <Button onClick={submit} disabled={submitting}>
             {submitting ? <Loader2 className="animate-spin" size={16} /> : null}
             提交

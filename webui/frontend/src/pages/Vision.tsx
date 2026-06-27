@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -12,53 +12,28 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import {
-  api,
-  type ChunkedPlanEvent,
-  type ChunkedSegmentEvent,
-  type ChunkedSummaryEvent,
-} from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardDesc, CardHeader, CardTitle } from "@/components/ui/card";
-
-type Mode = "image" | "video";
-type VideoSource = "file" | "url";
+import {
+  clearHistory,
+  deleteHistory,
+  handleVideoFileSelect,
+  HISTORY_MAX,
+  send,
+  setChunkedMode,
+  setImageFile,
+  setMode,
+  setModel,
+  setPrompt,
+  setSegmentSeconds,
+  setVideoSource,
+  setVideoUrl,
+  type VisionHistoryItem,
+  visionStore,
+} from "./vision.store";
 
 // ---- localStorage 历史 ----
-const HISTORY_KEY = "mimo:vision:history";
-const HISTORY_MAX = 30;
-
-interface VisionHistoryItem {
-  id: string;
-  ts: string; // ISO 时间
-  kind: "image" | "video" | "video_url" | "video_chunked" | "video_chunked_url";
-  inputLabel: string; // 文件名 / URL / 标题
-  prompt: string;
-  result?: string; // 单段:完整 content;分段:综合 summary
-  segments?: { start: number; end: number; description: string }[];
-  duration?: number;
-}
-
-function loadHistory(): VisionHistoryItem[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? (JSON.parse(raw) as VisionHistoryItem[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(items: VisionHistoryItem[]) {
-  try {
-    localStorage.setItem(
-      HISTORY_KEY,
-      JSON.stringify(items.slice(0, HISTORY_MAX)),
-    );
-  } catch {
-    // 满或被禁,吞
-  }
-}
 
 function fmtRelTime(iso: string): string {
   try {
@@ -74,13 +49,6 @@ const URL_HINTS = [
   "https://www.bilibili.com/video/BV1xx411c7mD/",
   "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
 ];
-
-interface ChunkedState {
-  total: number;
-  duration: number;
-  segments: ChunkedSegmentEvent[];
-  summary: string;
-}
 
 function fmtTime(sec: number) {
   const m = Math.floor(sec / 60);
@@ -140,231 +108,35 @@ function CopyButton({
   );
 }
 
+const VISION_MODELS = [
+  "mimo-v2.5",
+  "mimo-v2.5-pro",
+  "mimo-v2-pro",
+  "mimo-v2-flash",
+];
+
 export default function Vision() {
-  const [mode, setMode] = useState<Mode>("image");
-  const [videoSource, setVideoSource] = useState<VideoSource>("file");
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [videoDuration, setVideoDuration] = useState<number | null>(null);
-
-  function handleVideoFileSelect(f: File | null) {
-    setVideoFile(f);
-    setVideoDuration(null);
-    if (!f) return;
-    const v = document.createElement("video");
-    v.preload = "metadata";
-    v.src = URL.createObjectURL(f);
-    v.onloadedmetadata = () => {
-      setVideoDuration(Number.isFinite(v.duration) ? v.duration : null);
-      URL.revokeObjectURL(v.src);
-    };
-    v.onerror = () => {
-      URL.revokeObjectURL(v.src);
-    };
-  }
-  const [videoUrl, setVideoUrl] = useState("");
-  const [urlProbing, setUrlProbing] = useState(false);
-  const [urlProbeError, setUrlProbeError] = useState<string>("");
-  const [urlMeta, setUrlMeta] = useState<{
-    duration: number | null;
-    title?: string | null;
-    uploader?: string | null;
-    thumbnail?: string | null;
-    extractor?: string | null;
-    size?: number | null;
-  } | null>(null);
-  const [prompt, setPrompt] = useState("请详细描述这段内容。");
-  const [chunkedMode, setChunkedMode] = useState(false);
-  const [segmentSeconds, setSegmentSeconds] = useState(50);
-
-  // URL 输入 debounce 500ms 后,自动调 yt-dlp probe 拿元信息
-  useEffect(() => {
-    if (mode !== "video" || videoSource !== "url") return;
-    const url = videoUrl.trim();
-    setUrlMeta(null);
-    setUrlProbeError("");
-    if (!url) return;
-
-    const handle = setTimeout(async () => {
-      setUrlProbing(true);
-      try {
-        const meta = await api.videoProbe({ video_url: url });
-        setUrlMeta({
-          duration: meta.duration,
-          title: meta.title,
-          uploader: meta.uploader,
-          thumbnail: meta.thumbnail,
-          extractor: meta.extractor,
-          size: meta.size,
-        });
-        // 时长 > 90 秒,自动勾选分段(覆盖之前的状态,避免用户漏勾)
-        if (meta.duration !== null && meta.duration > 90) {
-          setChunkedMode(true);
-        }
-      } catch (e) {
-        setUrlProbeError(String(e));
-      } finally {
-        setUrlProbing(false);
-      }
-    }, 600);
-    return () => clearTimeout(handle);
-  }, [videoUrl, videoSource, mode]);
-  const [loading, setLoading] = useState(false);
-  const [output, setOutput] = useState<string>("");
-  const [error, setError] = useState<string>("");
-  const [chunked, setChunked] = useState<ChunkedState | null>(null);
-  const [history, setHistory] = useState<VisionHistoryItem[]>(() =>
-    loadHistory(),
-  );
-  const abortRef = useRef<AbortController | null>(null);
-
-  // 历史变更落 localStorage
-  useEffect(() => {
-    saveHistory(history);
-  }, [history]);
-
-  function pushHistory(item: VisionHistoryItem) {
-    setHistory((prev) => [item, ...prev].slice(0, HISTORY_MAX));
-  }
-
-  function deleteHistory(id: string) {
-    setHistory((prev) => prev.filter((h) => h.id !== id));
-  }
-
-  function clearHistory() {
-    if (
-      history.length > 0 &&
-      !confirm(`确定清空全部 ${history.length} 条历史?`)
-    )
-      return;
-    setHistory([]);
-  }
-
-  function makeId(): string {
-    return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  }
-
-  async function send() {
-    setLoading(true);
-    setError("");
-    setOutput("");
-    setChunked(null);
-
-    try {
-      // 长视频分段模式 — 仅视频且勾选时启用
-      if (mode === "video" && chunkedMode) {
-        if (videoSource === "file" && !videoFile)
-          throw new Error("请先选择视频文件");
-        if (videoSource === "url" && !videoUrl.trim())
-          throw new Error("请输入视频 URL");
-
-        const form = new FormData();
-        form.append("prompt", prompt);
-        form.append("segment_seconds", String(segmentSeconds));
-        if (videoSource === "file" && videoFile) form.append("file", videoFile);
-        if (videoSource === "url") form.append("video_url", videoUrl.trim());
-
-        const state: ChunkedState = {
-          total: 0,
-          duration: 0,
-          segments: [],
-          summary: "",
-        };
-        setChunked({ ...state });
-        abortRef.current?.abort();
-        abortRef.current = new AbortController();
-
-        await api.videoChunked(
-          form,
-          {
-            onPlan: (e: ChunkedPlanEvent) => {
-              state.total = e.total;
-              state.duration = e.duration;
-              setChunked({ ...state });
-            },
-            onSegment: (e: ChunkedSegmentEvent) => {
-              state.segments = [...state.segments, e];
-              setChunked({ ...state });
-            },
-            onSummary: (e: ChunkedSummaryEvent) => {
-              state.summary = e.text;
-              setChunked({ ...state });
-              // 综合到达即视为成功完成,落历史
-              pushHistory({
-                id: makeId(),
-                ts: new Date().toISOString(),
-                kind:
-                  videoSource === "url" ? "video_chunked_url" : "video_chunked",
-                inputLabel:
-                  videoSource === "url"
-                    ? videoUrl.trim()
-                    : (videoFile?.name ?? "(未知文件)"),
-                prompt,
-                result: e.text,
-                segments: state.segments.map((s) => ({
-                  start: s.start,
-                  end: s.end,
-                  description: s.description,
-                })),
-                duration: state.duration,
-              });
-            },
-            onError: (msg) => setError(msg),
-          },
-          abortRef.current.signal,
-        );
-        return;
-      }
-
-      // 单段模式(原逻辑)
-      let resp: { choices?: { message?: { content?: string } }[] };
-      if (mode === "image") {
-        if (!imageFile) throw new Error("请先选择图片");
-        const form = new FormData();
-        form.append("prompt", prompt);
-        form.append("file", imageFile);
-        resp = (await api.imageUnderstand(form)) as never;
-      } else if (videoSource === "file") {
-        if (!videoFile) throw new Error("请先选择视频文件");
-        const form = new FormData();
-        form.append("prompt", prompt);
-        form.append("file", videoFile);
-        resp = (await api.videoUnderstand(form)) as never;
-      } else {
-        if (!videoUrl.trim()) throw new Error("请输入视频 URL");
-        resp = (await api.videoUnderstandUrl({
-          video_url: videoUrl.trim(),
-          prompt,
-        })) as never;
-      }
-      const text =
-        resp.choices?.[0]?.message?.content ?? JSON.stringify(resp, null, 2);
-      setOutput(text);
-      // 落历史
-      pushHistory({
-        id: makeId(),
-        ts: new Date().toISOString(),
-        kind:
-          mode === "image"
-            ? "image"
-            : videoSource === "url"
-              ? "video_url"
-              : "video",
-        inputLabel:
-          mode === "image"
-            ? (imageFile?.name ?? "(未知图片)")
-            : videoSource === "url"
-              ? videoUrl.trim()
-              : (videoFile?.name ?? "(未知视频)"),
-        prompt,
-        result: text,
-      });
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
+  const st = visionStore.use();
+  const {
+    mode,
+    videoSource,
+    imageFile,
+    videoFile,
+    videoDuration,
+    videoUrl,
+    urlProbing,
+    urlProbeError,
+    urlMeta,
+    prompt,
+    model,
+    chunkedMode,
+    segmentSeconds,
+    loading,
+    output,
+    error,
+    chunked,
+    history,
+  } = st;
 
   return (
     <div className="space-y-6">
@@ -593,8 +365,8 @@ export default function Vision() {
                       </span>
                       <input
                         type="range"
-                        min={20}
-                        max={90}
+                        min={10}
+                        max={120}
                         step={5}
                         value={segmentSeconds}
                         onChange={(e) =>
@@ -612,6 +384,30 @@ export default function Vision() {
             </div>
           </div>
         )}
+
+        <div className="mb-3">
+          <label className="mb-1 block text-xs text-[var(--color-fg-muted)]">
+            模型(选填)
+          </label>
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            disabled={mode === "video" && chunkedMode}
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] px-2 py-1.5 text-sm disabled:opacity-50"
+          >
+            <option value="">默认(mimo-v2.5)</option>
+            {VISION_MODELS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          {mode === "video" && chunkedMode && (
+            <div className="mt-1 text-xs text-[var(--color-fg-muted)]">
+              分段分析固定用 vision 模型逐段分析 + v2.5-pro 综合,不支持自选
+            </div>
+          )}
+        </div>
 
         <textarea
           value={prompt}
