@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,6 +18,8 @@ from mimo_mcp.api import asr, diarization
 from mimo_mcp.client import MimoAPIError
 from mimo_mcp.config import get_settings
 from mimo_mcp.models import ASRRequest
+
+from ..sse import sse_event
 
 router = APIRouter()
 
@@ -33,10 +34,6 @@ def _save_upload(file: UploadFile, content: bytes) -> Path:
     target = out_dir / f"asr_{datetime.now(timezone.utc).strftime('%H%M%S%f')}{ext}"
     target.write_bytes(content)
     return target
-
-
-def _sse(event: str, data: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 @router.post("")
@@ -60,16 +57,16 @@ async def _chunked_stream(req: ASRRequest, segment_seconds: int) -> Any:
     """把 transcribe_chunked 的 yield 包装成 SSE 文本流。"""
     try:
         async for evt in asr.transcribe_chunked(req, segment_seconds=segment_seconds):
-            yield _sse(evt["kind"], evt)
+            yield sse_event(evt["kind"], evt)
     except (ValueError, FileNotFoundError) as e:
-        yield _sse("error", {"status": 400, "message": str(e)})
+        yield sse_event("error", {"status": 400, "message": str(e)})
     except RuntimeError as e:
-        yield _sse("error", {"status": 502, "message": str(e)})
+        yield sse_event("error", {"status": 502, "message": str(e)})
     except MimoAPIError as e:
-        yield _sse("error", {"status": e.status, "message": str(e)})
+        yield sse_event("error", {"status": e.status, "message": str(e)})
     except Exception as e:
-        yield _sse("error", {"status": 500, "message": f"未知错误:{e}"})
-    yield _sse("done", {})
+        yield sse_event("error", {"status": 500, "message": f"未知错误:{e}"})
+    yield sse_event("done", {})
 
 
 @router.post("/chunked")
@@ -98,17 +95,17 @@ async def _diarize_stream(audio_path: str, language: str, num_speakers: int) -> 
         async for evt in diarization.transcribe_diarized(
             audio_path, language=language, num_speakers=num_speakers
         ):
-            yield _sse(evt["kind"], evt)
+            yield sse_event(evt["kind"], evt)
     except (ValueError, FileNotFoundError) as e:
-        yield _sse("error", {"status": 400, "message": str(e)})
+        yield sse_event("error", {"status": 400, "message": str(e)})
     except RuntimeError as e:
         # 模型缺失 / ffmpeg 缺失等
-        yield _sse("error", {"status": 502, "message": str(e)})
+        yield sse_event("error", {"status": 502, "message": str(e)})
     except MimoAPIError as e:
-        yield _sse("error", {"status": e.status, "message": str(e)})
+        yield sse_event("error", {"status": e.status, "message": str(e)})
     except Exception as e:
-        yield _sse("error", {"status": 500, "message": f"未知错误:{e}"})
-    yield _sse("done", {})
+        yield sse_event("error", {"status": 500, "message": f"未知错误:{e}"})
+    yield sse_event("done", {})
 
 
 @router.post("/diarize")

@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,6 +22,8 @@ from mimo_mcp.api import vision
 from mimo_mcp.client import MimoAPIError
 from mimo_mcp.config import get_settings
 from mimo_mcp.models import ImageInput
+
+from ..sse import sse_event
 
 router = APIRouter()
 
@@ -112,26 +113,22 @@ class ChunkedBody(BaseModel):
     segment_seconds: int = Field(default=50, ge=10, le=120)
 
 
-def _sse(event: str, data: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
 async def _chunked_stream(video: str, prompt: str, segment_seconds: int) -> Any:
     """把 video_understand_chunked 的 yield 包装成 SSE 文本流。"""
     try:
         async for evt in vision.video_understand_chunked(
             video, prompt, segment_seconds=segment_seconds,
         ):
-            yield _sse(evt["kind"], evt)
+            yield sse_event(evt["kind"], evt)
     except (ValueError, FileNotFoundError) as e:
-        yield _sse("error", {"status": 400, "message": str(e)})
+        yield sse_event("error", {"status": 400, "message": str(e)})
     except RuntimeError as e:
-        yield _sse("error", {"status": 502, "message": str(e)})
+        yield sse_event("error", {"status": 502, "message": str(e)})
     except MimoAPIError as e:
-        yield _sse("error", {"status": e.status, "message": str(e)})
+        yield sse_event("error", {"status": e.status, "message": str(e)})
     except Exception as e:
-        yield _sse("error", {"status": 500, "message": f"未知错误:{e}"})
-    yield _sse("done", {})
+        yield sse_event("error", {"status": 500, "message": f"未知错误:{e}"})
+    yield sse_event("done", {})
 
 
 @router.post("/video/chunked")

@@ -5,14 +5,18 @@ import {
   type ChunkedSegmentEvent,
   type ChunkedSummaryEvent,
 } from "@/lib/api";
+import { createHistory } from "@/lib/history";
 import { createStore } from "@/lib/taskStore";
 
 export type Mode = "image" | "video";
 export type VideoSource = "file" | "url";
 
 // ---- localStorage 历史 ----
-const HISTORY_KEY = "mimo:vision:history";
 export const HISTORY_MAX = 30;
+const visionHistory = createHistory<VisionHistoryItem>(
+  "mimo:vision:history",
+  HISTORY_MAX,
+);
 
 export interface VisionHistoryItem {
   id: string;
@@ -23,26 +27,6 @@ export interface VisionHistoryItem {
   result?: string; // 单段:完整 content;分段:综合 summary
   segments?: { start: number; end: number; description: string }[];
   duration?: number;
-}
-
-function loadHistory(): VisionHistoryItem[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? (JSON.parse(raw) as VisionHistoryItem[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistHistory(items: VisionHistoryItem[]) {
-  try {
-    localStorage.setItem(
-      HISTORY_KEY,
-      JSON.stringify(items.slice(0, HISTORY_MAX)),
-    );
-  } catch {
-    // 满或被禁,吞
-  }
 }
 
 export interface UrlMeta {
@@ -104,7 +88,7 @@ const initial: VisionState = {
   output: "",
   error: "",
   chunked: null,
-  history: loadHistory(),
+  history: visionHistory.load(),
 };
 
 export const visionStore = createStore<VisionState>(initial);
@@ -123,13 +107,13 @@ function makeId(): string {
 // ---- 历史操作(写 store 同步落 localStorage)----
 function pushHistory(item: VisionHistoryItem) {
   const next = [item, ...visionStore.get().history].slice(0, HISTORY_MAX);
-  persistHistory(next);
+  visionHistory.persist(next);
   visionStore.set({ history: next });
 }
 
 export function deleteHistory(id: string) {
   const next = visionStore.get().history.filter((h) => h.id !== id);
-  persistHistory(next);
+  visionHistory.persist(next);
   visionStore.set({ history: next });
 }
 
@@ -137,7 +121,7 @@ export function clearHistory() {
   const { history } = visionStore.get();
   if (history.length > 0 && !confirm(`确定清空全部 ${history.length} 条历史?`))
     return;
-  persistHistory([]);
+  visionHistory.persist([]);
   visionStore.set({ history: [] });
 }
 

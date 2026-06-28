@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +21,8 @@ from mimo_mcp.api import chat as api_chat
 from mimo_mcp.api import tts as api_tts
 from mimo_mcp.config import get_settings
 from mimo_mcp.models import AuditLogEntry, ChatMessage, ChatRequest, TTSRequest
+
+from ..sse import sse_event
 
 router = APIRouter()
 
@@ -170,13 +171,10 @@ async def batch(request: Request, body: BatchBody) -> StreamingResponse:
 
     async def event_stream() -> Any:
         # 第一帧:先告知前端总段数和切分预览,UI 可立即占位
-        yield "event: plan\n" + "data: " + json.dumps(
-            {"total": len(segments_preview), "segments": segments_preview},
-            ensure_ascii=False,
-        ) + "\n\n"
+        yield sse_event("plan", {"total": len(segments_preview), "segments": segments_preview})
 
         if not segments_preview:
-            yield "event: done\ndata: {}\n\n"
+            yield sse_event("done", {})
             return
 
         try:
@@ -200,15 +198,13 @@ async def batch(request: Request, body: BatchBody) -> StreamingResponse:
                     "bytes": seg.bytes,
                 }
                 await _record_audit(storage, status="ok", model=seg.model)
-                yield "event: segment\n" + "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+                yield sse_event("segment", payload)
         except Exception as e:
             await _record_audit(storage, status="error", model=None, error=str(e))
-            yield "event: error\n" + "data: " + json.dumps(
-                {"message": str(e)}, ensure_ascii=False
-            ) + "\n\n"
+            yield sse_event("error", {"message": str(e)})
             return
 
-        yield "event: done\ndata: {}\n\n"
+        yield sse_event("done", {})
 
     return StreamingResponse(
         event_stream(),

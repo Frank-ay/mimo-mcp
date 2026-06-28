@@ -6,6 +6,7 @@ import {
   type TTSResult,
   type VoiceRecord,
 } from "@/lib/api";
+import { createHistory } from "@/lib/history";
 import { createStore } from "@/lib/taskStore";
 
 export type Mode = "single" | "batch";
@@ -51,34 +52,14 @@ export interface TtsState {
   history: HistoryItem[];
 }
 
-const HISTORY_KEY = "mimo:tts:history";
 export const HISTORY_MAX = 20;
+const ttsHistory = createHistory<HistoryItem>("mimo:tts:history", HISTORY_MAX);
 
 export const SOURCE_LABEL: Record<VoiceRecord["source"], string> = {
   default: "预置",
   clone: "克隆",
   design: "设计",
 };
-
-function loadHistory(): HistoryItem[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? (JSON.parse(raw) as HistoryItem[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(items: HistoryItem[]) {
-  try {
-    localStorage.setItem(
-      HISTORY_KEY,
-      JSON.stringify(items.slice(0, HISTORY_MAX)),
-    );
-  } catch {
-    // localStorage 满或被禁,直接吞
-  }
-}
 
 const initial: TtsState = {
   mode: "single",
@@ -96,7 +77,7 @@ const initial: TtsState = {
   refineNotice: "",
   error: "",
   playToken: 0,
-  history: loadHistory(),
+  history: ttsHistory.load(),
 };
 
 export const ttsStore = createStore<TtsState>(initial);
@@ -131,12 +112,12 @@ export function setInstructions(instructions: string) {
 function pushHistory(item: HistoryItem) {
   const next = [item, ...ttsStore.get().history].slice(0, HISTORY_MAX);
   ttsStore.set({ history: next });
-  saveHistory(next);
+  ttsHistory.persist(next);
 }
 
 export function clearHistory() {
   ttsStore.set({ history: [] });
-  saveHistory([]);
+  ttsHistory.persist([]);
 }
 
 export function clearText() {

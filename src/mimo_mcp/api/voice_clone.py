@@ -23,6 +23,7 @@ from ..client import MimoClient
 from ..config import get_settings
 from ..models import VoiceCloneCreateRequest, VoiceRecord, VoiceSource, VoiceStatus
 from ..storage import Storage
+from ._media import audio_data_url
 
 SAMPLE_TEXT = "你好,这是 MiMo voice clone 的试听样本。"
 
@@ -32,11 +33,6 @@ def _ref_target(voice_id: str, src_suffix: str) -> Path:
     out = settings.artifacts_dir / "voice_refs"
     out.mkdir(parents=True, exist_ok=True)
     return out / f"{voice_id}{src_suffix or '.wav'}"
-
-
-def _data_url(path: Path, mime: str = "audio/wav") -> str:
-    b64 = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{b64}"
 
 
 async def create_clone(req: VoiceCloneCreateRequest, storage: Storage) -> VoiceRecord:
@@ -52,7 +48,7 @@ async def create_clone(req: VoiceCloneCreateRequest, storage: Storage) -> VoiceR
     if target.resolve() != src.resolve():
         shutil.copyfile(src, target)
 
-    data_url = _data_url(target)
+    data_url = audio_data_url(target)
 
     async with MimoClient(settings) as client:
         resp = await client.voice_clone(

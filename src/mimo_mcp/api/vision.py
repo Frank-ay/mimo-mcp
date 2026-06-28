@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 from ..client import MimoClient
 from ..config import get_settings
 from ..models import ImageInput
+from ._media import probe_duration, probe_video_codec
 
 log = logging.getLogger(__name__)
 
@@ -95,42 +96,6 @@ async def image_understand(
 # ---------------------------------------------------------------------------
 # 视频输入归一化
 # ---------------------------------------------------------------------------
-
-
-async def _probe_video_codec(path: Path) -> str:
-    """用 ffprobe 探视频流的 codec_name,失败时返回空字符串。"""
-    if shutil.which("ffprobe") is None:
-        return ""
-    proc = await asyncio.create_subprocess_exec(
-        "ffprobe", "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=codec_name",
-        "-of", "csv=p=0",
-        str(path),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    out, _ = await proc.communicate()
-    return out.decode("utf-8", errors="replace").strip().lower()
-
-
-async def _probe_video_duration(path: Path) -> float:
-    """ffprobe 探视频时长(秒)。失败返回 0。"""
-    if shutil.which("ffprobe") is None:
-        return 0.0
-    proc = await asyncio.create_subprocess_exec(
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "csv=p=0",
-        str(path),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    out, _ = await proc.communicate()
-    try:
-        return float(out.decode().strip())
-    except (ValueError, AttributeError):
-        return 0.0
 
 
 # MiMo vision 兼容的视频编码白名单(实测 AV1 会报 "Multimodal data is corrupted")
@@ -223,7 +188,7 @@ async def _path_to_data_url(path: Path) -> str:
     size = path.stat().st_size
 
     # 前置硬约束 1:时长。无论 size 多大,>90s 单段都没法分析(MiMo 实测会返回空内容)
-    duration = await _probe_video_duration(path)
+    duration = await probe_duration(path)
     if duration > _COMPRESS_MAX_DURATION + 1.0:
         raise ValueError(
             f"视频时长 {duration:.0f} 秒,超过单段分析上限"
@@ -327,7 +292,7 @@ async def _yt_dlp_download(url: str) -> Path:
     # 兼容性兜底:B 站等站点可能给 AV1 编码,MiMo 解不了。
     # 检测 codec,非 H.264 / H.265 系列就强制转 H.264;**保留完整时长**,
     # 不能用 _ffmpeg_compress(它会截到 90 秒丢内容,这是历史 bug 的根因)。
-    codec = await _probe_video_codec(final)
+    codec = await probe_video_codec(final)
     if codec and codec not in _COMPATIBLE_CODECS:
         log.warning(
             "yt-dlp 产物是 %s 编码,MiMo vision 不兼容,转 H.264(保留完整时长)", codec,
@@ -464,7 +429,7 @@ async def _ffmpeg_segment(src: Path, segment_seconds: int) -> list[tuple[Path, f
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("分段功能需要 ffmpeg,请先 brew install ffmpeg")
 
-    duration = await _probe_video_duration(src)
+    duration = await probe_duration(src)
     if duration <= 0:
         raise RuntimeError(f"无法读取视频时长(可能格式损坏):{src.name}")
 
@@ -531,7 +496,7 @@ async def video_understand_chunked(
 
     settings = get_settings()
     src = await _resolve_to_local_path(video)
-    duration = await _probe_video_duration(src)
+    duration = await probe_duration(src)
     chunks = await _ffmpeg_segment(src, segment_seconds)
     total = len(chunks)
     log.info("长视频分段:%d 段,总时长 %.1f s", total, duration)

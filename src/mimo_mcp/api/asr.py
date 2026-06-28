@@ -28,6 +28,7 @@ import httpx
 from ..client import MimoClient
 from ..config import get_settings
 from ..models import ASRRequest
+from ._media import probe_duration
 
 log = logging.getLogger(__name__)
 
@@ -103,25 +104,6 @@ def _extract_text(raw: dict[str, Any]) -> str:
 _CHUNK_SR = 16000
 
 
-async def _probe_audio_duration(path: Path) -> float:
-    """ffprobe 探音频时长(秒)。失败返回 0。"""
-    if shutil.which("ffprobe") is None:
-        return 0.0
-    proc = await asyncio.create_subprocess_exec(
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(path),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    out, _ = await proc.communicate()
-    try:
-        return float(out.decode().strip())
-    except (ValueError, AttributeError):
-        return 0.0
-
-
 async def _ffmpeg_segment_audio(
     src: Path, segment_seconds: int
 ) -> list[tuple[Path, float, float]]:
@@ -129,7 +111,7 @@ async def _ffmpeg_segment_audio(
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("分段转写需要 ffmpeg,请先 `brew install ffmpeg` 后重试。")
 
-    duration = await _probe_audio_duration(src)
+    duration = await probe_duration(src)
     out_dir = src.parent / f"{src.stem}_asrchunks_{uuid.uuid4().hex[:6]}"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_template = str(out_dir / "part_%03d.wav")

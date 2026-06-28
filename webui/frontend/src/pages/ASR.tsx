@@ -1,28 +1,22 @@
-import { useState } from "react";
-import {
-  Check,
-  Copy,
-  Download,
-  Loader2,
-  Scissors,
-  Upload,
-  Users,
-} from "lucide-react";
+import { Download, Loader2, Scissors, Upload, Users } from "lucide-react";
 import { type DiarizeSegment } from "@/lib/api";
+import { CopyButton } from "@/components/CopyButton";
 import { Button } from "@/components/ui/button";
 import { Card, CardDesc, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatClock } from "@/lib/utils";
 import { asrStore, pickAsrFile, setAsrMode, startAsr } from "./asr.store";
 
 const SPEAKER_COLORS = [
-  "#60a5fa", "#f472b6", "#34d399", "#fbbf24",
-  "#a78bfa", "#fb923c", "#22d3ee", "#f87171",
+  "#60a5fa",
+  "#f472b6",
+  "#34d399",
+  "#fbbf24",
+  "#a78bfa",
+  "#fb923c",
+  "#22d3ee",
+  "#f87171",
 ];
 
-function fmtTime(sec: number): string {
-  if (!Number.isFinite(sec)) return "--:--";
-  const s = Math.max(0, Math.floor(sec));
-  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-}
 function speakerColor(spk: number): string {
   return SPEAKER_COLORS[spk % SPEAKER_COLORS.length];
 }
@@ -35,7 +29,7 @@ function toTxt(segs: DiarizeSegment[]): string {
   return segs
     .map(
       (s) =>
-        `[${speakerLabel(s.speaker)} ${fmtTime(s.start)}-${fmtTime(s.end)}] ${s.text}`,
+        `[${speakerLabel(s.speaker)} ${formatClock(s.start)}-${formatClock(s.end)}] ${s.text}`,
     )
     .join("\n\n");
 }
@@ -71,17 +65,7 @@ function download(content: string, filename: string, mime: string) {
 
 export default function ASR() {
   const st = asrStore.use();
-  const [copied, setCopied] = useState(false);
 
-  async function copyText(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      asrStore.set({ error: "复制失败,请手动选择文本复制" });
-    }
-  }
   function saveText(text: string) {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     const base = st.file?.name?.replace(/\.[^.]+$/, "") || "转写";
@@ -96,7 +80,8 @@ export default function ASR() {
         <div>
           <h1 className="text-2xl font-bold">语音转写</h1>
           <p className="text-sm text-[var(--color-fg-muted)]">
-            mimo-v2.5-asr 转写;长音频可分段,多人对话可分离说话人(本地 sherpa-onnx)
+            mimo-v2.5-asr 转写;长音频可分段,多人对话可分离说话人(本地
+            sherpa-onnx)
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -198,7 +183,8 @@ export default function ASR() {
               <span className="text-sm font-medium">说话人分离</span>
             </div>
             <div className="mb-2 text-xs text-[var(--color-fg-muted)]">
-              本地 sherpa-onnx 区分"谁在何时说",再逐段用 MiMo 转写;同时得到说话人标注与时间戳。
+              本地 sherpa-onnx 区分"谁在何时说",再逐段用 MiMo
+              转写;同时得到说话人标注与时间戳。
               声音差异越大越准,已知人数时建议手动指定。
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -263,7 +249,7 @@ export default function ASR() {
             <CardTitle>分段进度</CardTitle>
             <CardDesc>
               {st.chunk.total > 0
-                ? `${st.chunk.total} 段 · 总时长 ${fmtTime(st.chunk.duration)} · 已完成 ${st.chunk.segments.length}/${st.chunk.total}`
+                ? `${st.chunk.total} 段 · 总时长 ${formatClock(st.chunk.duration)} · 已完成 ${st.chunk.segments.length}/${st.chunk.total}`
                 : "正在切段…"}
             </CardDesc>
           </CardHeader>
@@ -274,7 +260,7 @@ export default function ASR() {
                 className="flex gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] px-3 py-1.5 text-sm"
               >
                 <span className="shrink-0 font-mono text-xs text-[var(--color-fg-muted)]">
-                  {fmtTime(s.start)}-{fmtTime(s.end)}
+                  {formatClock(s.start)}-{formatClock(s.end)}
                 </span>
                 <span className="flex-1">{s.text || "(本段无内容)"}</span>
               </div>
@@ -296,7 +282,7 @@ export default function ASR() {
               <CardTitle>说话人分离结果</CardTitle>
               <CardDesc>
                 {st.diar.statusMsg ||
-                  `${st.diar.numSpeakers} 个说话人 · ${st.diar.segments.length} 段 · 总时长 ${fmtTime(st.diar.duration)}`}
+                  `${st.diar.numSpeakers} 个说话人 · ${st.diar.segments.length} 段 · 总时长 ${formatClock(st.diar.duration)}`}
               </CardDesc>
             </div>
             {st.diar.segments.length > 0 && !st.running && (
@@ -372,7 +358,7 @@ export default function ASR() {
                   {speakerLabel(s.speaker)}
                 </span>
                 <span className="shrink-0 self-center font-mono text-xs text-[var(--color-fg-muted)]">
-                  {fmtTime(s.start)}-{fmtTime(s.end)}
+                  {formatClock(s.start)}-{formatClock(s.end)}
                 </span>
                 <span className="flex-1 self-center">
                   {s.text || "(本段无内容)"}
@@ -396,16 +382,15 @@ export default function ASR() {
               </CardDesc>
             </div>
             <div className="flex gap-2">
-              <Button
+              <CopyButton
+                text={st.resp.text}
+                label="复制"
                 variant="outline"
-                size="sm"
-                onClick={() => copyText(st.resp!.text)}
-                disabled={!st.resp.text}
-                title="复制到剪贴板"
-              >
-                {copied ? <Check size={14} /> : <Copy size={14} />}
-                {copied ? "已复制" : "复制"}
-              </Button>
+                duration={1500}
+                onError={() =>
+                  asrStore.set({ error: "复制失败,请手动选择文本复制" })
+                }
+              />
               <Button
                 variant="outline"
                 size="sm"

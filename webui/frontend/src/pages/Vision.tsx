@@ -1,9 +1,7 @@
 import { useState } from "react";
 import {
-  Check,
   ChevronDown,
   ChevronRight,
-  Copy,
   FileVideo,
   History,
   Link2,
@@ -12,9 +10,11 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import { CopyButton } from "@/components/CopyButton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardDesc, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatClock } from "@/lib/utils";
 import {
   clearHistory,
   deleteHistory,
@@ -49,64 +49,6 @@ const URL_HINTS = [
   "https://www.bilibili.com/video/BV1xx411c7mD/",
   "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
 ];
-
-function fmtTime(sec: number) {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-/** 一键复制到剪贴板,带「已复制 ✓」短暂回显。 */
-function CopyButton({
-  text,
-  label = "复制",
-}: {
-  text: string;
-  label?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  async function handle() {
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // 兼容老浏览器:用临时 textarea + execCommand
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } finally {
-        document.body.removeChild(ta);
-      }
-    }
-  }
-
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={handle}
-      disabled={!text}
-      title={copied ? "已复制到剪贴板" : "复制全部文本到剪贴板"}
-    >
-      {copied ? (
-        <Check size={14} className="text-emerald-400" />
-      ) : (
-        <Copy size={14} />
-      )}
-      {copied ? "已复制" : label}
-    </Button>
-  );
-}
 
 const VISION_MODELS = [
   "mimo-v2.5",
@@ -299,7 +241,7 @@ export default function Vision() {
                         )}
                         <div className="text-[var(--color-fg-muted)]">
                           {urlMeta.duration !== null
-                            ? `时长 ${fmtTime(urlMeta.duration)}`
+                            ? `时长 ${formatClock(urlMeta.duration)}`
                             : urlMeta.size
                               ? `体积 ${(urlMeta.size / 1024 / 1024).toFixed(1)} MB · 时长未知(直链)`
                               : "时长 / 体积未知"}
@@ -457,7 +399,7 @@ export default function Vision() {
                 <CardTitle>分段进度</CardTitle>
                 <CardDesc>
                   {chunked.total > 0
-                    ? `共 ${chunked.total} 段 · 总时长 ${fmtTime(chunked.duration)} · 已完成 ${chunked.segments.length}/${chunked.total}`
+                    ? `共 ${chunked.total} 段 · 总时长 ${formatClock(chunked.duration)} · 已完成 ${chunked.segments.length}/${chunked.total}`
                     : "正在切段…"}
                 </CardDesc>
               </div>
@@ -467,7 +409,7 @@ export default function Vision() {
                     text={chunked.segments
                       .map(
                         (seg) =>
-                          `[${fmtTime(seg.start)}-${fmtTime(seg.end)}] 段 ${seg.index + 1}\n${seg.description}`,
+                          `[${formatClock(seg.start)}-${formatClock(seg.end)}] 段 ${seg.index + 1}\n${seg.description}`,
                       )
                       .join("\n\n")}
                     label="复制全部段"
@@ -500,7 +442,7 @@ export default function Vision() {
                   <summary className="flex cursor-pointer items-center gap-2 text-sm">
                     <Badge>段 {seg.index + 1}</Badge>
                     <span className="text-[var(--color-fg-muted)]">
-                      {fmtTime(seg.start)} - {fmtTime(seg.end)} ·{" "}
+                      {formatClock(seg.start)} - {formatClock(seg.end)} ·{" "}
                       {(seg.bytes / 1024 / 1024).toFixed(2)} MB
                     </span>
                   </summary>

@@ -2,6 +2,7 @@
  * 与 FastAPI 后端通信的薄包装。开发期 Vite proxy 转发到 7801,
  * 生产期 FastAPI 同源托管 dist。
  */
+import { consumeSSE } from "./sse";
 
 const BASE = "/api";
 
@@ -356,40 +357,18 @@ export const api = {
       handlers.onError?.(await resp.text().catch(() => resp.statusText));
       return;
     }
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let sep = buf.indexOf("\n\n");
-      while (sep !== -1) {
-        const raw = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        sep = buf.indexOf("\n\n");
-        let event = "message";
-        let data = "";
-        for (const line of raw.split("\n")) {
-          if (line.startsWith("event:")) event = line.slice(6).trim();
-          else if (line.startsWith("data:")) data += line.slice(5).trim();
-        }
-        if (!data) continue;
-        try {
-          const obj = JSON.parse(data);
-          if (event === "plan") handlers.onPlan?.(obj as ChunkedPlanEvent);
-          else if (event === "segment")
-            handlers.onSegment?.(obj as ChunkedSegmentEvent);
-          else if (event === "summary")
-            handlers.onSummary?.(obj as ChunkedSummaryEvent);
-          else if (event === "error")
-            handlers.onError?.(obj.message ?? "未知错误");
-          else if (event === "done") handlers.onDone?.();
-        } catch {
-          // ignore parse error, keep reading
-        }
-      }
-    }
+    await consumeSSE(resp, (event, obj) => {
+      const data = obj as Record<string, unknown>;
+      if (event === "plan")
+        handlers.onPlan?.(data as unknown as ChunkedPlanEvent);
+      else if (event === "segment")
+        handlers.onSegment?.(data as unknown as ChunkedSegmentEvent);
+      else if (event === "summary")
+        handlers.onSummary?.(data as unknown as ChunkedSummaryEvent);
+      else if (event === "error")
+        handlers.onError?.((data.message as string | undefined) ?? "未知错误");
+      else if (event === "done") handlers.onDone?.();
+    });
   },
 
   asr: (input: { file: File; language?: string }) => {
@@ -414,41 +393,20 @@ export const api = {
       handlers.onError?.(await resp.text().catch(() => resp.statusText));
       return;
     }
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let sep = buf.indexOf("\n\n");
-      while (sep !== -1) {
-        const raw = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        sep = buf.indexOf("\n\n");
-        let event = "message";
-        let data = "";
-        for (const line of raw.split("\n")) {
-          if (line.startsWith("event:")) event = line.slice(6).trim();
-          else if (line.startsWith("data:")) data += line.slice(5).trim();
-        }
-        if (!data) continue;
-        try {
-          const obj = JSON.parse(data);
-          if (event === "status") handlers.onStatus?.(obj.message ?? "");
-          else if (event === "plan") handlers.onPlan?.(obj as DiarizePlanEvent);
-          else if (event === "segment")
-            handlers.onSegment?.(obj as DiarizeSegmentEvent);
-          else if (event === "summary")
-            handlers.onSummary?.(obj as DiarizeSummaryEvent);
-          else if (event === "error")
-            handlers.onError?.(obj.message ?? "未知错误");
-          else if (event === "done") handlers.onDone?.();
-        } catch {
-          // 忽略解析错误,继续读
-        }
-      }
-    }
+    await consumeSSE(resp, (event, obj) => {
+      const data = obj as Record<string, unknown>;
+      if (event === "status")
+        handlers.onStatus?.((data.message as string | undefined) ?? "");
+      else if (event === "plan")
+        handlers.onPlan?.(data as unknown as DiarizePlanEvent);
+      else if (event === "segment")
+        handlers.onSegment?.(data as unknown as DiarizeSegmentEvent);
+      else if (event === "summary")
+        handlers.onSummary?.(data as unknown as DiarizeSummaryEvent);
+      else if (event === "error")
+        handlers.onError?.((data.message as string | undefined) ?? "未知错误");
+      else if (event === "done") handlers.onDone?.();
+    });
   },
 
   // ASR 长音频分段转写,SSE 流式(切段 → 逐段转写 → 合并)
@@ -466,40 +424,18 @@ export const api = {
       handlers.onError?.(await resp.text().catch(() => resp.statusText));
       return;
     }
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let sep = buf.indexOf("\n\n");
-      while (sep !== -1) {
-        const raw = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        sep = buf.indexOf("\n\n");
-        let event = "message";
-        let data = "";
-        for (const line of raw.split("\n")) {
-          if (line.startsWith("event:")) event = line.slice(6).trim();
-          else if (line.startsWith("data:")) data += line.slice(5).trim();
-        }
-        if (!data) continue;
-        try {
-          const obj = JSON.parse(data);
-          if (event === "plan") handlers.onPlan?.(obj as ASRChunkPlanEvent);
-          else if (event === "segment")
-            handlers.onSegment?.(obj as ASRChunkSegmentEvent);
-          else if (event === "summary")
-            handlers.onSummary?.(obj as ASRChunkSummaryEvent);
-          else if (event === "error")
-            handlers.onError?.(obj.message ?? "未知错误");
-          else if (event === "done") handlers.onDone?.();
-        } catch {
-          // 忽略解析错误,继续读
-        }
-      }
-    }
+    await consumeSSE(resp, (event, obj) => {
+      const data = obj as Record<string, unknown>;
+      if (event === "plan")
+        handlers.onPlan?.(data as unknown as ASRChunkPlanEvent);
+      else if (event === "segment")
+        handlers.onSegment?.(data as unknown as ASRChunkSegmentEvent);
+      else if (event === "summary")
+        handlers.onSummary?.(data as unknown as ASRChunkSummaryEvent);
+      else if (event === "error")
+        handlers.onError?.((data.message as string | undefined) ?? "未知错误");
+      else if (event === "done") handlers.onDone?.();
+    });
   },
 
   // 用 v2.5-pro 改写朗读文本(口语化、补标点、数字念法等)
@@ -542,39 +478,15 @@ export const api = {
       handlers.onError?.(text);
       return;
     }
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      // SSE 事件由 \n\n 分隔
-      let sep = buffer.indexOf("\n\n");
-      while (sep !== -1) {
-        const raw = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        sep = buffer.indexOf("\n\n");
-        const lines = raw.split("\n");
-        let event = "message";
-        let data = "";
-        for (const line of lines) {
-          if (line.startsWith("event:")) event = line.slice(6).trim();
-          else if (line.startsWith("data:")) data += line.slice(5).trim();
-        }
-        if (!data) continue;
-        try {
-          const obj = JSON.parse(data);
-          if (event === "plan") handlers.onPlan?.(obj as BatchPlanEvent);
-          else if (event === "segment")
-            handlers.onSegment?.(obj as BatchSegmentEvent);
-          else if (event === "error")
-            handlers.onError?.(obj.message ?? "未知错误");
-          else if (event === "done") handlers.onDone?.();
-        } catch {
-          // 忽略解析错误,继续读
-        }
-      }
-    }
+    await consumeSSE(resp, (event, obj) => {
+      const data = obj as Record<string, unknown>;
+      if (event === "plan")
+        handlers.onPlan?.(data as unknown as BatchPlanEvent);
+      else if (event === "segment")
+        handlers.onSegment?.(data as unknown as BatchSegmentEvent);
+      else if (event === "error")
+        handlers.onError?.((data.message as string | undefined) ?? "未知错误");
+      else if (event === "done") handlers.onDone?.();
+    });
   },
 };

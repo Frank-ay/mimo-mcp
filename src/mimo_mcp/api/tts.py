@@ -23,6 +23,7 @@ from ..client import MimoClient
 from ..config import get_settings
 from ..models import TTSRequest, VoiceRecord, VoiceSource, VoiceStatus
 from ..storage import Storage
+from ._media import audio_data_url
 
 log = logging.getLogger(__name__)
 
@@ -46,10 +47,6 @@ def output_path(audio_format: str = "wav") -> Path:
     out_dir = settings.artifacts_dir / "tts" / today
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir / f"{uuid.uuid4().hex}.{audio_format}"
-
-
-def _data_url(path: Path, mime: str = "audio/wav") -> str:
-    return f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
 def _build_instructions(req: TTSRequest) -> str | None:
@@ -85,7 +82,7 @@ async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[st
                 )
             resp = await client.voice_clone(
                 text=req.text,
-                reference_data_url=_data_url(Path(record.reference_path)),
+                reference_data_url=audio_data_url(Path(record.reference_path)),
                 model=settings.default_voice_clone_model,
                 audio_format=audio_format,
                 instructions=instructions,
@@ -101,7 +98,7 @@ async def synthesize(req: TTSRequest, storage: Storage | None = None) -> dict[st
             if record.reference_path and Path(record.reference_path).is_file():
                 resp = await client.voice_clone(
                     text=req.text,
-                    reference_data_url=_data_url(Path(record.reference_path)),
+                    reference_data_url=audio_data_url(Path(record.reference_path)),
                     model=settings.default_voice_clone_model,
                     audio_format=audio_format,
                     instructions=instructions,
