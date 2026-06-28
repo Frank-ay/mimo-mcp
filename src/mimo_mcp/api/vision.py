@@ -8,7 +8,7 @@
 3. ``https://www.bilibili.com/...`` 等视频站 → ``yt-dlp`` 下载到本地后转 DataURL
 4. ``/path/to/local.mp4``(绝对/相对路径,~ 也可)→ 读文件后转 DataURL
 
-DataURL 路线已 Phase 0 实测可行(见 docs/api-research.md)。
+DataURL 路线已 Phase 0 实测可行(实测见 docs/USAGE.md 附录:API 实测备注)。
 """
 
 from __future__ import annotations

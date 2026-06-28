@@ -144,7 +144,7 @@ asyncio.run(main())
 | 6 | `mimo.voice_design_create` | 文字描述生成音色 | `voice_prompt`,`name`,`sample_text?` | `VoiceRecord` |
 | 7 | `mimo.voice_list` | 列本地音色库 | `source?`(default/clone/design) | `VoiceRecord[]` |
 | 8 | `mimo.voice_delete` | 删本地音色 | `voice_id` | `{deleted: bool}` |
-| 9 | `mimo.asr` | 语音转写 | `audio_path` 或 `audio_url` | 套餐内 `unavailable`(F7 仅云端,不预置本地兜底) |
+| 9 | `mimo.asr` | 语音转写 | `audio_path` 或 `audio_url`,`language?`(auto/zh/en) | 纯文本转写结果(长音频自动分段,可选说话人分离) |
 | 10 | `mimo.health` | 健康自检 | — | `{api_key_configured, base_url_reachable, auth_valid, asr_cloud_available}` |
 | 11 | `mimo.usage` | 本地用量统计 | `since_hours?` 默认 24 | `{calls, errors, by_tool, ...}` |
 
@@ -201,7 +201,7 @@ afplay data/artifacts/tts/20260430/abc123.wav
 
 > 用 mimo.tts 把这段解说稿用 voice_id=design_xxxxxx 读出来。
 
-(每次合成都会基于 prompt 临时生成,所以"音色一致性"不如克隆,但可以脱离参考音频。)
+(voicedesign 是 stateless 接口。创建时会生成一段试听音频并固化到本地 `reference_path`;后续用该 voice_id 朗读新文本时,实际改走 `voiceclone` 模型复刻那段试听音频,而非每次重新生成设计,以此锁定音色避免漂移。)
 
 ### 4.4 看图说话 → 配音
 
@@ -227,7 +227,7 @@ mimo.video_understand(video="data:video/mp4;base64,...", ...)               # Da
 
 文件 ≤ 50 MB(原始字节),约对应 30 秒-2 分钟 720p 视频。
 
-(实测发现:MiMo 服务端对外网 URL 的主动下载不可靠,所以本仓库统一在客户端落地后再发 DataURL。详见 `docs/api-research.md`。)
+(实测发现:MiMo 服务端对外网 URL 的主动下载不可靠,所以本仓库统一在客户端落地后再发 DataURL。详见本文[附录:API 实测备注](#附录api-实测备注)。)
 
 ### 4.6 长视频分段分析(突破 50 MB 上限)
 
@@ -289,7 +289,7 @@ async for seg in synthesize_batch("……长文……", voice="苏打", segment_
 | 音色库 | `/voices` | 浏览 / 试听 / 删除全部音色(default + clone + design) |
 | 声音克隆 | `/voices/clone` | 拖一段参考音频 + 命名 + 备注 → 一键创建 |
 | 声音设计 | `/voices/design` | 写音色 prompt + 试听文本 → 一键生成 |
-| 语音转写 | `/asr` | 上传音频做 ASR;若返回 `unavailable` 说明套餐不含此模型 |
+| 语音转写 | `/asr` | 上传音频做 ASR(中英自动/指定);长音频自动分段转写;可选 sherpa-onnx 离线说话人分离;支持导出 .txt / SRT / JSON |
 | 审计日志 | `/audit` | 看最近 200 次 MCP/Web 调用,5 秒自动刷新 |
 
 ### 5.1 「文字转语音」页详解
@@ -298,7 +298,7 @@ async for seg in synthesize_batch("……长文……", voice="苏打", segment_
 - **批量模式**:贴长文 → 拖动"分段字数上限"滑块(20–300)→ 合成会按句末标点自动切段 → SSE 流逐段返回,前端就绪一段播一段
 - **音色下拉**:三组(预置 / 克隆 / 设计),与「音色库」实时同步——刚克隆的 voice 立刻能在这里选用
 - **历史**:本次会话最多 20 条,localStorage 持久(刷新还在,换会话清空);每条可展开看所有段落 + 重新试听
-- **隐藏字段**:speed / style 经 Phase 0 实测当前不生效,UI 暂不暴露;SDK 仍透传,等 MiMo 修复后立即可用
+- **隐藏字段**:`audio.speed`/`audio.style` 实测无效(speed 反向、style 字节不变),UI 不暴露、字段已移除;风格请改用 `instructions` 自然语言描述(v2.5 导演模式)
 
 ### 5.2 后端 TTS API(供脚本化调用)
 
@@ -328,8 +328,10 @@ A:绝大多数情况是 `MIMO_BASE_URL` 与 key 类型不匹配。
 **Q4:chat 返回 `content` 为空只有 `reasoning_content`?**
 A:v2.5 系列是 thinking 模型,默认会先做思考。给的 `max_tokens` 太小会让它没机会输出最终回复。本仓库已默认 4096,长任务可临时调到 8192+。
 
-**Q5:F7 ASR 报 unavailable / NotImplementedError?**
-A:符合预期。Token Plan 套餐不含 `mimo-v2.5-asr` 模型;PRD §15-Q6 决策:"仅云端,不预置本地兜底"。等小米官方开放云端 ASR 后(或换成普通 sk- key 且套餐含 ASR)即可立即可用,不需要改代码。
+**Q5:ASR 转写怎么用?支持哪些语言?**
+A:`mimo.asr` 工具支持 `language=auto`(默认)/ `zh` / `en`。内部走 `/chat/completions` 接口,以 base64 `input_audio` 传音频,模型 `mimo-v2.5-asr`。返回**纯文本**,无时间戳或说话人信息。
+
+长音频会自动用 ffmpeg 按时长切段后逐段转写再拼接。Web UI(`/asr`)还额外支持 **sherpa-onnx 离线说话人分离**(自动检测人数或手动指定),并可导出三种格式:带说话人标注的 `.txt`、SRT 字幕、JSON 结构化数据。
 
 **Q6:产物 wav 在哪?**
 - 单次 TTS:`data/artifacts/tts/<yyyymmdd>/<uuid>.wav`
@@ -402,8 +404,49 @@ PY
 ## 九、参考链接
 
 - PRD 全文:[docs/PRD.md](PRD.md)
-- API 调研笔记:[docs/api-research.md](api-research.md)
 - 官方文档:<https://platform.xiaomimimo.com/docs/api/chat/openai-api>
 - 官方模型矩阵:<https://mimo.xiaomi.com/>
+- LiteLLM provider:<https://docs.litellm.ai/docs/providers/xiaomi_mimo>
+
+---
+
+## 附录:API 实测备注
+
+以下为 Phase 0(2026-04-30)实测的硬结论,作为代码层设计依据长期存档。
+
+### TTS stream=true 是"伪流式"
+
+`stream: true` 时接口返回 SSE,但 wav 数据在**单一 chunk** 内一次性返回,并非 chunk-by-chunk 增量音频。因此前端不需要 MediaSource API,"边生成边播"不可行,实际行为是"等完整 wav 收到后立即播放"。
+
+### audio.speed / audio.style 实测无效
+
+| 字段 | 行为 |
+|---|---|
+| `audio.speed=0.5/1.0/2.0` | 字段被接受,但 speed 越大 duration 反而越长(效果与预期相反) |
+| `audio.style="gentle but tired"/"happy"` | 字段被接受,但产物字节完全一致,风格未变化 |
+
+结论:两个字段**当前不可用**。UI 不暴露,字段已从请求模型移除。风格控制请改用 `instructions` 自然语言描述(v2.5 导演模式)。
+
+### TTS format 支持矩阵
+
+| format | 状态 | 备注 |
+|---|---|---|
+| `wav` | ✅ | RIFF 头,默认推荐 |
+| `mp3` | ✅ | MPEG ADTS,体积约为 wav 的 1/5 |
+| `pcm` | ✅(SDK 专用) | 原始 PCM,适合后端二次处理 |
+| `pcm16` | ✅(SDK 专用) | 16-bit PCM |
+| `opus` | ❌ | 报错 `Unsupported audio format: opus` |
+
+UI 仅暴露 wav / mp3;pcm / pcm16 仅留 SDK 给高级用户。
+
+### 视频输入稳定性矩阵
+
+| 输入形式 | 可靠性 | 说明 |
+|---|---|---|
+| `data:video/mp4;base64,...` DataURL | ✅ 最稳定,推荐 | 本仓库统一归一为此形式 |
+| 直链 mp4 URL(http(s)) | ⚠️ 不可靠 | MiMo 后端拉外网时随机报 400 `failed to download url data` |
+| B 站/YouTube/抖音等页面型 URL | ❌ 不可用 | MiMo 直接拿不到 mp4(返回 HTML) |
+
+本仓库统一在客户端落地:直链走 `httpx.stream` 本地下载,B 站等走 `yt-dlp` 下载,本地路径直读,全部转为 DataURL 后上传。文件 ≤ 50 MB 原始字节(base64 后 ~67 MB)。
 
 Laybot 待命中!

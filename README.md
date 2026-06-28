@@ -65,7 +65,34 @@ cp .env.example .env
 
 > **生产 / 单进程**:`./scripts/build_frontend.sh && ./scripts/run_web.sh`——构建一次后只跑后端,FastAPI 托管 dist,访问 <http://localhost:7801> 一个地址即可。
 
-> 📖 完整逐步命令(含每条脚本背后的底层等价命令)见 [docs/启动说明.md](docs/启动说明.md)。
+#### 脚本 → 底层命令对照
+
+| 脚本 / 命令 | 实际执行 | 端口 / 产物 |
+|---|---|---|
+| `scripts/dev.sh` | `run_web.sh` + 前端 dev 并行,统一 `Ctrl+C` 退出 | :7801 + :5173 |
+| `scripts/run_web.sh` | `source .env` → `uv run --quiet mimo-web` | :7801 |
+| `scripts/run_mcp.sh` | `source .env` → `uv run --quiet mimo-mcp` | stdio |
+| `scripts/build_frontend.sh` | `cd webui/frontend` →(按需 `pnpm install`)→ `pnpm build` | webui/frontend/dist |
+| 前端 dev(`pnpm dev`) | `vite` | :5173 |
+| `uv run mimo-web` | `webui.backend.main:main`(FastAPI / uvicorn) | :7801 |
+| `uv run mimo-mcp` | `mimo_mcp.server:main`(FastMCP,stdio) | stdio |
+
+#### 验证
+
+```bash
+# 后端健康检查(不消耗 token)
+curl -s http://127.0.0.1:7801/api/usage/health | python3 -m json.tool
+
+# 前端
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5173/
+```
+
+后端健康正常时 `api_key_configured / base_url_reachable / auth_valid` 均为 `true`。
+
+#### 停止
+
+- 用 `dev.sh` 或单终端启动的:在该终端按 `Ctrl+C`(`dev.sh` 会同时停掉前后端)。
+- 后台启动的:`lsof -ti:7801,5173 | xargs kill`
 
 ---
 

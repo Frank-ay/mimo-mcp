@@ -1,5 +1,7 @@
 # MiMo MCP Server — 产品需求文档(PRD v1.0)
 
+> 注:本 PRD 为立项基线文档,部分 F7(ASR)/TTS 设计已演进,实际实现以代码与 docs/USAGE.md 为准。
+
 > 项目代号:**mimo-mcp**
 > 文档归属:`docs/PRD.md`
 > 撰写日期:2026-04-29(M0 + M1 + 增量任务 1 实施完毕,内容已包含全部实测发现)
@@ -250,7 +252,7 @@ command = "/Users/Frank-ay/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
 |---|---|---|
 | MiMo TTS 实际是 `/chat/completions` + `audio` 字段而非标准 `/audio/speech` | 高 | M1 第一步:用真 key 各打一发请求,以实际响应为准再写适配层 |
 | 视频理解的上传/URL 模式未在公开文档中确认 | 中 | M1 优先 URL 模式,失败回退到"先调用 upload endpoint" |
-| **ASR 云端 API 形态未公开**(MiMo-V2.5-ASR 仅开源权重) | **中-高** | M1 实测:① 若 `/v1/audio/transcriptions` 可用 → 采用;② 若不可用 → F7 状态置 `unavailable`,Web 给"等待 MiMo 官方开放"提示,**不预置本地兜底**(决策见 §15-Q6) |
+| **ASR 云端 API 形态**(M1 已实测) | **已确认** | 走 `/chat/completions`,音频以 base64 DataURL 作 `input_audio` 字段传入,model=`mimo-v2.5-asr`,language 支持 `auto/zh/en`,返回纯文本在 `choices[0].message.content`。`/audio/transcriptions` 在 MiMo 网关 404。 |
 | 声音克隆 voice_id 字段命名/审核流程未公开 | 中 | M1 用真账号试 1 次提交,以实际响应字段为准;UI 显示"审核中"中间状态 |
 | Codex 对 stdio MCP 的稳定性偶现重连失败 | 低 | `run_mcp.sh` 健壮启动 + `mimo.health` 检查 tool + Web Dashboard 显示 MCP 心跳 |
 | 大文件(视频/音频)在 stdio 协议下传输慢 | 中 | 约定 tool 入参传"本地路径"或"http(s) URL",**不传 base64 大对象**;Web UI 上传走 FastAPI 不走 MCP |
@@ -330,7 +332,7 @@ command = "/Users/Frank-ay/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
 
 ### Phase 0 — 探针(✅ 已完成 2026-04-30)
 
-详见 `docs/api-research.md` 2026-04-30 节。要点:
+详见 `docs/USAGE.md` 附录「API 实测备注」。要点:
 
 | Risk | 实测结论 | 影响 Phase 1+ 范围 |
 |---|---|---|
@@ -427,7 +429,7 @@ command = "/Users/Frank-ay/Desktop/xiaomi-MIMO/scripts/run_mcp.sh"
 - `webui/frontend/src/components/Layout.tsx`(加 NAV 项)
 - `webui/frontend/src/lib/api.ts`(加 ttsSynthesize / ttsStream / ttsBatch)
 - `docs/USAGE.md`(新章节)
-- `docs/api-research.md`(Phase 0 把 R1-R4 实测结果落档)
+- `docs/USAGE.md`(附录「API 实测备注」收录 Phase 0 R1-R4 实测结论)
 
 ## F. 验证(端到端 done)
 
