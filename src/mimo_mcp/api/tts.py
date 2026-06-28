@@ -18,7 +18,6 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from ..client import MimoClient
 from ..config import get_settings

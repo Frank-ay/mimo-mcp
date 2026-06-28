@@ -33,7 +33,6 @@ class TTSBody(BaseModel):
     audio_format: Literal["wav", "mp3"] = "wav"
     instructions: str | None = None  # v2.5 自然语言风格指令(导演模式)
     style: str | None = None
-    speed: float | None = None  # v2.5 已废弃,保留仅为向后兼容
 
 
 class BatchBody(TTSBody):
@@ -147,7 +146,6 @@ async def synthesize(request: Request, body: TTSBody) -> dict[str, Any]:
                 audio_format=body.audio_format,
                 instructions=body.instructions,
                 style=body.style,
-                speed=body.speed,
             ),
             storage,
         )

@@ -49,3 +49,8 @@ htmlcov/
 
 # 运行期数据(音频 / SQLite / 上传),整目录忽略(README §2)
 data/
+
+# gitnexus / 工具生成物(本地用,不入库)
+AGENTS.md
+.claude/skills/
+CLAUDE.md

@@ -52,12 +52,8 @@ async def create_clone(
         name=name,
         description=description,
     )
-    try:
-        record = await voice_clone.create_clone(req, request.app.state.storage)
-        return record.model_dump(mode="json")
-    except NotImplementedError:
-        # M0 阶段:返回 stub 让前端能显示流程
-        return voice_clone.stub_record(req).model_dump(mode="json")
+    record = await voice_clone.create_clone(req, request.app.state.storage)
+    return record.model_dump(mode="json")
 
 
 @router.post("/design")
@@ -77,8 +73,5 @@ async def create_design(
     if sample_text:
         payload["sample_text"] = sample_text
     req = VoiceDesignCreateRequest(**payload)
-    try:
-        record = await voice_design.create_design(req, request.app.state.storage)
-        return record.model_dump(mode="json")
-    except NotImplementedError:
-        return voice_design.stub_record(req).model_dump(mode="json")
+    record = await voice_design.create_design(req, request.app.state.storage)
+    return record.model_dump(mode="json")

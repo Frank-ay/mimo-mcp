@@ -62,7 +62,6 @@ class TTSRequest(BaseModel):
     voice_id: str | None = None
     voice: str | None = Field(default=None, description="原生 voice 名,例如 mimo_default")
     audio_format: Literal["wav", "mp3", "opus"] = "wav"
-    speed: float | None = None  # v2.5 已废弃:模型不支持该参数,不再透传(请改用 instructions)
     style: str | None = None  # 简易风格词;有 instructions 时以 instructions 为准
     instructions: str | None = Field(
         default=None,

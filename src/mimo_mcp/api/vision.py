@@ -19,6 +19,7 @@ import logging
 import mimetypes
 import shutil
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any

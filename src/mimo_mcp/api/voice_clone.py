@@ -80,18 +80,3 @@ async def create_clone(req: VoiceCloneCreateRequest, storage: Storage) -> VoiceR
     )
     await storage.upsert_voice(record)
     return record
-
-
-def stub_record(req: VoiceCloneCreateRequest) -> VoiceRecord:
-    """已实现真实路径,保留 stub 兼容旧引用。"""
-    now = datetime.now(timezone.utc)
-    return VoiceRecord(
-        voice_id=f"clone_pending_{int(now.timestamp())}",
-        name=req.name,
-        source=VoiceSource.CLONE,
-        status=VoiceStatus.PENDING,
-        description=req.description,
-        reference_path=req.reference_audio_path,
-        created_at=now,
-        updated_at=now,
-    )

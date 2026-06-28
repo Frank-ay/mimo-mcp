@@ -1,12 +1,11 @@
-"""SQLite 持久化层(aiosqlite)。voices / sessions / audit_log 三张表。
+"""SQLite 持久化层(aiosqlite)。voices / audit_log 两张表。
 
 仅维护表结构 + 基本增删查;复杂业务编排放到 api/* 层去。
 """
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +26,6 @@ CREATE TABLE IF NOT EXISTS voices (
     updated_at      TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind            TEXT NOT NULL,
-    payload_json    TEXT NOT NULL,
-    created_at      TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS audit_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     ts              TEXT NOT NULL,
@@ -50,10 +42,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_voices_source ON voices (source);
 """
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _row_to_voice(row: aiosqlite.Row) -> VoiceRecord:
@@ -169,12 +157,3 @@ class Storage:
             )
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
-
-    async def save_session(self, kind: str, payload: dict[str, Any]) -> int:
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                "INSERT INTO sessions (kind, payload_json, created_at) VALUES (?, ?, ?)",
-                (kind, json.dumps(payload, ensure_ascii=False), _utcnow()),
-            )
-            await db.commit()
-            return int(cursor.lastrowid or 0)

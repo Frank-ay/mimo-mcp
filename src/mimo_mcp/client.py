@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import base64
 import logging
-from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -77,14 +76,6 @@ class MimoClient:
         resp = await self.client.post("/chat/completions", json=body)
         self._check(resp)
         return resp.json()
-
-    async def chat_stream(self, body: dict[str, Any]) -> AsyncIterator[str]:
-        body = {**body, "stream": True}
-        async with self.client.stream("POST", "/chat/completions", json=body) as resp:
-            self._check(resp)
-            async for line in resp.aiter_lines():
-                if line:
-                    yield line
 
     async def ping(self) -> bool:
         """轻量探测:只检查 base_url 可达性,不消耗 token。"""

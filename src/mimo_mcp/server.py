@@ -175,7 +175,6 @@ async def mimo_tts(
     audio_format: Literal["wav", "mp3", "opus"] = "wav",
     instructions: str | None = None,
     style: str | None = None,
-    speed: float | None = None,  # v2.5 已废弃:模型无此参数,保留仅为向后兼容
 ) -> dict[str, str | int]:
     req = TTSRequest(
         text=text,
@@ -184,7 +183,6 @@ async def mimo_tts(
         audio_format=audio_format,
         instructions=instructions,
         style=style,
-        speed=speed,
     )
     try:
         result = await api_tts.synthesize(req, _get_storage())

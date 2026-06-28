@@ -61,17 +61,3 @@ async def create_design(req: VoiceDesignCreateRequest, storage: Storage) -> Voic
     )
     await storage.upsert_voice(record)
     return record
-
-
-def stub_record(req: VoiceDesignCreateRequest) -> VoiceRecord:
-    """已实现真实路径,保留 stub 以兼容旧引用。"""
-    now = datetime.now(timezone.utc)
-    return VoiceRecord(
-        voice_id=f"design_pending_{int(now.timestamp())}",
-        name=req.name,
-        source=VoiceSource.DESIGN,
-        status=VoiceStatus.PENDING,
-        voice_prompt=req.voice_prompt,
-        created_at=now,
-        updated_at=now,
-    )
